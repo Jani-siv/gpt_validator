@@ -1,0 +1,16 @@
+
+{
+  "language": "python",
+  "test_path": "unit_tests",
+  "code_coverage_threshold": 80,
+  "exclude_paths_from_testing": [
+    ".venv",
+    "unit_tests"
+  ],
+  "low_treshold_files": {
+    "code_coverage_threshold": 49,
+    "filenames": [
+      "gpt_validator.py"
+    ]
+  }
+}
