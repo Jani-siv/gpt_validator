@@ -1,0 +1,26 @@
+{
+  "allowed_to_modify": [
+    "zephyr_main_app"
+  ],
+  "ignored_files": [
+    "*.md",
+    "*.txt",
+    "*.json"
+  ],
+  "not_allowed_header_includes": [
+    "zephyr.h"
+  ],
+  "not_allowed_include_extensions": [
+    ".cpp",
+    ".cxx",
+    ".cc"
+  ],
+  "not_allowed_cmake_include_dirs": [
+    "tests/unit_tests"
+  ],
+  "not_allowed_cmake_linked_libraries": [
+  ],
+  "not_allowed_cmake_subdirectories": [
+    "../../../"
+  ]
+}

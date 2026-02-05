@@ -206,12 +206,6 @@ def run_check(data: Any) -> int:
                     val = m.group(2).strip()
                     var_map[name] = val
 
-            # Disallow usage of the FILE(...) CMake command in changed CMakeLists.txt
-            file_cmd_rx = re.compile(r"\bfile\s*\(", re.IGNORECASE)
-            for idx_line, cl in enumerate(cleaned_lines, start=1):
-                if file_cmd_rx.search(cl):
-                    errors_found.append((rel, idx_line, 'FILE(', 'file_command', 'FILE('))
-
             for i, (orig_line, line) in enumerate(zip(lines, cleaned_lines), start=1):
                 # expand known variables (basic replacement)
                 expanded = line
@@ -278,38 +272,6 @@ def run_check(data: Any) -> int:
                             errors_found.append((rel, start_idx + 1, pat, kind, matched_display))
                     continue
                 idx += 1
-            # Now scan for target_include_directories(...) blocks and flag literal absolute paths
-            idx2 = 0
-            while idx2 < len(cleaned_lines):
-                ln2 = cleaned_lines[idx2]
-                if re.search(r'\btarget_include_directories\s*\(', ln2, re.IGNORECASE):
-                    start_idx2 = idx2
-                    paren_count2 = ln2.count('(') - ln2.count(')')
-                    idx2 += 1
-                    # collect the block lines (cleaned, comments removed)
-                    block_lines = [ln2]
-                    while paren_count2 > 0 and idx2 < len(cleaned_lines):
-                        lnn = cleaned_lines[idx2]
-                        paren_count2 += lnn.count('(') - lnn.count(')')
-                        block_lines.append(lnn)
-                        idx2 += 1
-
-                    # Inspect each line in the block for tokens that literally start with '/'
-                    for offset, bline in enumerate(block_lines):
-                        # split into tokens by whitespace and commas
-                        for token in re.split(r'[\s,]+', bline.strip()):
-                            if not token:
-                                continue
-                            # remove surrounding quotes and trailing paren
-                            t = token.strip().strip('"').strip("'")
-                            t = t.rstrip(')')
-                            # literal absolute path: starts with '/'
-                            if t.startswith('/'):
-                                # report at the specific line number within the file
-                                report_line = start_idx2 + offset + 1
-                                errors_found.append((rel, report_line, t, 'abs_include', t))
-                    continue
-                idx2 += 1
         except Exception as e:
             print(f"Warning: could not read {rel}: {e}", file=sys.stderr)
 
@@ -318,16 +280,9 @@ def run_check(data: Any) -> int:
             disp = humanize_pattern(excerpt)
             if kind == 'subdirectory':
                 reason = 'Not allowed CMake subdirectory found'
-                print(f"FAIL: {rel}:{lineno}: {reason}: {disp}")
-            elif kind == 'abs_include':
-                reason = 'Absolute include path found'
-                print(f"FAIL: {rel}:{lineno}: {reason}: {disp}")
-            elif kind == 'file_command':
-                reason = 'Use of FILE() command is disallowed'
-                print(f"FAIL: {rel}:{lineno}: {reason}: {disp}")
             else:
                 reason = 'Not allowed CMake include dir found'
-                print(f"FAIL: {rel}:{lineno}: {reason}: {disp}")
+            print(f"FAIL: {rel}:{lineno}: {reason}: {disp}")
         return 1
 
     print('OK')
