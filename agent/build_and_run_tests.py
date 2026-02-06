@@ -154,7 +154,11 @@ def main():
         sys.exit(2)
 
     repo_root = find_repo_root(script_dir)
-    project_dir = (repo_root / execute_path).resolve()
+    execute_path_value = Path(execute_path)
+    if execute_path_value.is_absolute():
+        project_dir = execute_path_value.resolve()
+    else:
+        project_dir = (repo_root / execute_path_value).resolve()
     if not project_dir.exists():
         print(f"ERROR: computed project_dir does not exist: {project_dir}")
         sys.exit(2)

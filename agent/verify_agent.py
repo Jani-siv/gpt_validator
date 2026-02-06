@@ -73,12 +73,28 @@ def load_project_config(here: str, project_type: str | None) -> dict:
 	raise ValueError(f"Unknown project type '{project_type}'. Available: {available}")
 
 
-def build_command(command: str, extra_args: list[str]) -> list[str]:
+def build_command(command: str, extra_args: list[str], base_dir: str, cwd: str) -> list[str]:
 	cmd = shlex.split(command)
 	if not cmd:
 		raise ValueError('Empty command in project configuration')
 	if cmd[0] in {'python', 'python3'}:
 		cmd[0] = sys.executable
+		if len(cmd) > 1 and not os.path.isabs(cmd[1]):
+			candidate = os.path.normpath(os.path.join(cwd, cmd[1]))
+			if os.path.isfile(candidate):
+				cmd[1] = candidate
+			else:
+				cmd[1] = os.path.normpath(os.path.join(base_dir, cmd[1]))
+		return cmd + extra_args
+	if cmd[0].endswith('.py'):
+		script_path = cmd[0]
+		if not os.path.isabs(script_path):
+			candidate = os.path.normpath(os.path.join(cwd, script_path))
+			if os.path.isfile(candidate):
+				script_path = candidate
+			else:
+				script_path = os.path.normpath(os.path.join(base_dir, script_path))
+		return [sys.executable, script_path] + cmd[1:] + extra_args
 	return cmd + extra_args
 
 
@@ -113,9 +129,9 @@ def extract_command_and_path(container: dict, prefix: str) -> tuple[str | None, 
 def main() -> int:
 	here = os.path.dirname(os.path.abspath(__file__))
 	parser = argparse.ArgumentParser(description='Run verification steps and optionally build a unit test')
-	parser.add_argument('--build', metavar='PATH', help='Path (from zephyr_main_app) to unit test to build, e.g. unit_tests/parest')
-	parser.add_argument('--run_test', metavar='PATH', help='Path (from zephyr_main_app) to unit test to run, e.g. unit_tests/parest')
-	parser.add_argument('--run_tests', dest='run_test', help=argparse.SUPPRESS)
+	parser.add_argument('--build', nargs='?', const='', metavar='PATH', help='Path (from zephyr_main_app) to unit test to build, e.g. unit_tests/parest')
+	parser.add_argument('--run_test', nargs='?', const='', metavar='PATH', help='Path (from zephyr_main_app) to unit test to run, e.g. unit_tests/parest')
+	parser.add_argument('--run_tests', dest='run_test', nargs='?', const='', metavar='PATH', help='Alias for --run_test')
 	parser.add_argument('--project', metavar='NAME', help='Project type from .agent_rules.json (case-insensitive)')
 	args = parser.parse_args()
 
@@ -137,7 +153,7 @@ def main() -> int:
 			return code
 
 	project_config = None
-	if args.build or args.run_test:
+	if args.build is not None or args.run_test is not None:
 		try:
 			project_config = load_project_config(here, args.project)
 		except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
@@ -145,7 +161,7 @@ def main() -> int:
 			return 2
 
 	# If requested, run build step after successful checks
-	if args.build:
+	if args.build is not None:
 		testframework = read_test_framework(project_config)
 		builder = {}
 		if isinstance(testframework, dict):
@@ -171,18 +187,19 @@ def main() -> int:
 		repo_root = os.path.abspath(os.path.join(here, '..', '..', '..'))
 		cwd = execute_path if os.path.isabs(execute_path) else os.path.join(repo_root, execute_path)
 		build_path = args.build
-		cmd = build_command(command, [build_path])
+		extra_args = [build_path] if build_path else []
+		cmd = build_command(command, extra_args, here, cwd)
 		print(f"Running build: cd {cwd} && {' '.join(cmd)}")
 		proc = subprocess.run(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-		# check from output that it contains following line: Build succeeded.
-		if "Build succeeded." not in proc.stdout:
+		if proc.stdout:
 			print(proc.stdout, end='')
+		if proc.returncode != 0:
 			return 1
 		print("OK: Build succeeded.")
 		
 
 	# If requested, run test step after successful checks
-	if args.run_test:
+	if args.run_test is not None:
 		testframework = read_test_framework(project_config)
 		runner = {}
 		if isinstance(testframework, dict):
@@ -208,22 +225,16 @@ def main() -> int:
 		repo_root = os.path.abspath(os.path.join(here, '..', '..', '..'))
 		cwd = execute_path if os.path.isabs(execute_path) else os.path.join(repo_root, execute_path)
 		test_path = args.run_test
-		cmd = build_command(command, [test_path])
+		extra_args = [test_path] if test_path else []
+		cmd = build_command(command, extra_args, here, cwd)
 		print(f"Running tests: cd {cwd} && {' '.join(cmd)}")
 		proc = subprocess.run(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-		# check that output do not contain any Status: FAIL
-		if "All builds succeeded." not in proc.stdout:
+		if proc.stdout:
 			print(proc.stdout, end='')
-			print("FAIL: Tests could not be run due to build failure.")
-			print("hint: Use --build to build the test first.")
-			print("zephyr_main_app/ztests/reports/runtime_error.log may contain more details.")
-			print("zephyr_main_app/ztests/run_time_execution.log may contain more details.")
+		if proc.returncode != 0:
 			return 1
-		if "Status: FAIL" in proc.stdout:
-			print(proc.stdout, end='')
-			print("FAIL:Some tests failed.")
-			return 1
-		else:
+		project_type = str(project_config.get('project_type', '')).lower() if project_config else ''
+		if project_type == 'zephyr':
 			# Tests passed - run coverage verifier script located next to this driver.
 			verifier = os.path.join(here, 'zephyr_verify_coverage.py')
 			print(f"Running coverage check: {verifier}")
@@ -231,7 +242,7 @@ def main() -> int:
 			if code != 0:
 				print(f"Stopped: {os.path.basename(verifier)} exited with code {code}", file=sys.stderr)
 				return code
-			print("OK: Build succeeded. All tests passed.")
+		print("OK: Build succeeded. All tests passed.")
 
 
 	print('All checks passed')

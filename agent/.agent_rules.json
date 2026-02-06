@@ -10,13 +10,13 @@
         "test_runner": {
           "name": "ztester",
           "info": "test need to be provided as param to the command and path is from zephyr_main_app root (e.g. ztests/test_sample)",
-          "command": "python run_tests.py",
+          "command": "python run_tests.py --run_test",
           "execute_path": "zephyr_main_app/ztests/"
         },
         "test_builder": {
           "name": "zbuilder",
           "info": "test need to be provided as param to the command and path is from zephyr_main_app root (e.g. ztests/test_sample)",
-          "command": "python run_tests.py -b",
+          "command": "python run_tests.py --build",
           "execute_path": "zephyr_main_app/ztests/"
         }
       },
@@ -73,20 +73,20 @@
       "testframework": {
         "test_runner": {
           "name": "test_runner",
-          "info": "Provide test path as parameter",
-          "command": "echo \"run tests\"",
+          "info": "Runs dti_tools unit tests",
+          "command": "build_and_run_tests.py --run_tests",
           "execute_path": "tools/dti_tools/"
         },
         "test_builder": {
           "name": "test_builder",
-          "info": "Provide build options if needed",
-          "command": "echo \"build tests\"",
+          "info": "Builds dti_tools unit tests",
+          "command": "build_and_run_tests.py --build",
           "execute_path": "tools/dti_tools/"
         }
       },
       "file_rules": {
-        "allowed_to_modify": [],
-        "ignored_files": []
+        "allowed_to_modify": ["zephyr_main_app/ztests/", "tools/dti_tools"],
+        "ignored_files": ["*.json", "*.md", "*.txt", "*.py"]
       },
       "cpp_code_rules": {
         "not_allowed_header_includes": [],
