@@ -81,6 +81,7 @@ def main() -> int:
 			print("FAIL: Tests could not be run due to build failure.")
 			print("hint: Use --build to build the test first.")
 			print("zephyr_main_app/ztests/reports/runtime_error.log may contain more details.")
+			print("zephyr_main_app/ztests/run_time_execution.log may contain more details.")
 			return 1
 		if "Status: FAIL" in proc.stdout:
 			print(proc.stdout, end='')

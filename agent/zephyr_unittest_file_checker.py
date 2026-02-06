@@ -17,6 +17,16 @@ import sys
 import re
 from typing import Any, Iterable, List, Optional
 import fnmatch
+import sys as _sys_for_import
+import os as _os_for_import
+# ensure local tools dir is importable
+_SCRIPT_DIR = _os_for_import.path.dirname(_os_for_import.path.abspath(__file__))
+if _SCRIPT_DIR not in _sys_for_import.path:
+    _sys_for_import.path.insert(0, _SCRIPT_DIR)
+try:
+    from git_file_handler import get_changed_files
+except Exception:
+    get_changed_files = None
 
 
 def humanize_pattern(pat: str) -> str:
@@ -72,6 +82,15 @@ def find_git_root(start: Optional[str] = None) -> Optional[str]:
 def git_changed_files(repo_dir: Optional[str] = None) -> List[str]:
     git_root = find_git_root(repo_dir)
     cwd = git_root or os.getcwd()
+    if get_changed_files:
+        info = get_changed_files(cwd)
+        out: List[str] = []
+        for key in ("created", "added", "modified", "deleted"):
+            for p in info.get(key, []):
+                if p not in out:
+                    out.append(p)
+        return out
+
     try:
         proc = subprocess.run(
             ['git', 'status', '--porcelain=v1', '-uall'],
@@ -91,7 +110,6 @@ def git_changed_files(repo_dir: Optional[str] = None) -> List[str]:
     for ln in proc.stdout.splitlines():
         if not ln:
             continue
-        # porcelain format: XY <path> (rename shows ->)
         raw = ln[3:].strip()
         if raw.startswith('./'):
             raw = raw[2:]
@@ -99,7 +117,6 @@ def git_changed_files(repo_dir: Optional[str] = None) -> List[str]:
             raw = raw.split('->')[-1].strip()
         paths.append(raw)
 
-    # Also include untracked files from `git ls-files -o --exclude-standard` to be robust
     try:
         proc2 = subprocess.run(
             ['git', 'ls-files', '-o', '--exclude-standard'],

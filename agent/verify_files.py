@@ -15,6 +15,15 @@ import subprocess
 from pathlib import Path
 import fnmatch
 from typing import Iterable, List, Any
+from pathlib import Path as _Path_for_import
+# Ensure local tools directory is on sys.path so we can import git_file_handler
+_SCRIPT_DIR = _Path_for_import(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+	sys.path.insert(0, str(_SCRIPT_DIR))
+try:
+	from git_file_handler import get_changed_files
+except Exception:
+	get_changed_files = None
 
 
 def verify_paths(paths: Iterable[str]) -> List[str]:
@@ -40,16 +49,24 @@ def git_modified_files(repo_dir: str) -> List[str]:
 
 	Includes staged and unstaged changes. Raises CalledProcessError if git fails.
 	"""
+	if get_changed_files:
+		info = get_changed_files(repo_dir)
+		# return staged/unstaged modifications and adds/deletes similar to original behavior
+		res = []
+		for k in ("modified", "added", "deleted"):
+			for p in info.get(k, []):
+				if p not in res:
+					res.append(p)
+		return res
+
 	repo = Path(repo_dir)
-	# Use git status --porcelain to list modified files (staged/unstaged)
+	# Fallback: shell out to git if import failed
 	out = subprocess.check_output(["git", "-C", str(repo), "status", "--porcelain"], text=True)
 	modified: List[str] = []
 	for line in out.splitlines():
 		if not line.strip():
 			continue
-		# Format: XY <path>  (rename shows '->')
 		parts = line[3:]
-		# Handle rename output "old -> new"
 		if "->" in parts:
 			parts = parts.split("->", 1)[1].strip()
 		modified.append(parts)
@@ -58,6 +75,13 @@ def git_modified_files(repo_dir: str) -> List[str]:
 
 def git_untracked_files(repo_dir: str) -> List[str]:
 	"""Return a list of untracked file paths (relative to repo_dir)."""
+	if get_changed_files:
+		info = get_changed_files(repo_dir)
+		created = set(info.get("created", []))
+		added = set(info.get("added", []))
+		untracked = sorted(created - added)
+		return untracked
+
 	repo = Path(repo_dir)
 	out = subprocess.check_output(["git", "-C", str(repo), "ls-files", "--others", "--exclude-standard"], text=True)
 	return [line.strip() for line in out.splitlines() if line.strip()]
