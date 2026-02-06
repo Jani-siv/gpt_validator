@@ -12,11 +12,20 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 import re
 from typing import Any, Iterable, List, Optional
 import fnmatch
+import sys as _sys_for_import
+import os as _os_for_import
+# ensure local tools dir is importable
+_SCRIPT_DIR = _os_for_import.path.dirname(_os_for_import.path.abspath(__file__))
+if _SCRIPT_DIR not in _sys_for_import.path:
+    _sys_for_import.path.insert(0, _SCRIPT_DIR)
+try:
+    from git_file_handler import get_changed_files
+except Exception:
+    get_changed_files = None
 
 
 def humanize_pattern(pat: str) -> str:
@@ -41,6 +50,25 @@ def default_agent_rules_path() -> str:
 def load_json(path: str) -> Any:
     with open(path, 'r', encoding='utf-8') as fh:
         return json.load(fh)
+
+
+def select_project_rules(rules: Any) -> dict:
+    if not isinstance(rules, dict):
+        return {}
+    projects = rules.get('project_configurations')
+    if isinstance(projects, list):
+        for project in projects:
+            if isinstance(project, dict):
+                return project
+    if isinstance(projects, dict):
+        if 'project_type' in projects:
+            return projects
+        for key, value in projects.items():
+            if isinstance(value, dict):
+                entry = dict(value)
+                entry.setdefault('project_type', key)
+                return entry
+    return rules
 
 
 def main() -> int:
@@ -72,54 +100,16 @@ def find_git_root(start: Optional[str] = None) -> Optional[str]:
 def git_changed_files(repo_dir: Optional[str] = None) -> List[str]:
     git_root = find_git_root(repo_dir)
     cwd = git_root or os.getcwd()
-    try:
-        proc = subprocess.run(
-            ['git', 'status', '--porcelain=v1', '-uall'],
-            cwd=cwd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-        )
-    except FileNotFoundError:
-        raise RuntimeError('git executable not found')
+    if not get_changed_files:
+        raise RuntimeError('git_file_handler.get_changed_files is unavailable')
 
-    if proc.returncode != 0:
-        raise RuntimeError(f"git failed: {proc.stderr.strip()}")
-
-    paths: List[str] = []
-    for ln in proc.stdout.splitlines():
-        if not ln:
-            continue
-        # porcelain format: XY <path> (rename shows ->)
-        raw = ln[3:].strip()
-        if raw.startswith('./'):
-            raw = raw[2:]
-        if '->' in raw:
-            raw = raw.split('->')[-1].strip()
-        paths.append(raw)
-
-    # Also include untracked files from `git ls-files -o --exclude-standard` to be robust
-    try:
-        proc2 = subprocess.run(
-            ['git', 'ls-files', '-o', '--exclude-standard'],
-            cwd=cwd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-        )
-        if proc2.returncode == 0 and proc2.stdout:
-            for ln in proc2.stdout.splitlines():
-                p = ln.strip()
-                if p.startswith('./'):
-                    p = p[2:]
-                if p and p not in paths:
-                    paths.append(p)
-    except FileNotFoundError:
-        pass
-
-    return paths
+    info = get_changed_files(cwd)
+    out: List[str] = []
+    for key in ("created", "added", "modified", "deleted"):
+        for p in info.get(key, []):
+            if p not in out:
+                out.append(p)
+    return out
 
 
 def path_allowed(path: str, allowed_prefixes: Iterable[str]) -> bool:
@@ -136,10 +126,14 @@ def run_check(data: Any) -> int:
         print('Rules file root must be an object', file=sys.stderr)
         return 2
 
-    allowed = data.get('allowed_to_modify', [])
-    not_allowed = data.get('not_allowed_header_includes', [])
-    not_allowed_exts = data.get('not_allowed_include_extensions', [])
-    ignored = data.get('ignored_files', [])
+    project_rules = select_project_rules(data)
+    file_rules = project_rules.get('file_rules', {}) if isinstance(project_rules.get('file_rules', {}), dict) else {}
+    cpp_rules = project_rules.get('cpp_code_rules', {}) if isinstance(project_rules.get('cpp_code_rules', {}), dict) else {}
+
+    allowed = file_rules.get('allowed_to_modify', project_rules.get('allowed_to_modify', []))
+    ignored = file_rules.get('ignored_files', project_rules.get('ignored_files', []))
+    not_allowed = cpp_rules.get('not_allowed_header_includes', project_rules.get('not_allowed_header_includes', []))
+    not_allowed_exts = cpp_rules.get('not_allowed_include_extensions', project_rules.get('not_allowed_include_extensions', []))
     
 
     if not isinstance(allowed, list) or not isinstance(not_allowed, list):

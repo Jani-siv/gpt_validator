@@ -16,9 +16,18 @@ from __future__ import annotations
 import json
 import os
 import re
-import subprocess
 import sys
 from typing import Any, Iterable, List, Optional
+import sys as _sys_for_import
+import os as _os_for_import
+# make sure local tools dir is importable
+_SCRIPT_DIR = _os_for_import.path.dirname(_os_for_import.path.abspath(__file__))
+if _SCRIPT_DIR not in _sys_for_import.path:
+    _sys_for_import.path.insert(0, _SCRIPT_DIR)
+try:
+    from git_file_handler import get_changed_files
+except Exception:
+    get_changed_files = None
 
 
 def _strip_cmake_comments(line: str) -> str:
@@ -61,6 +70,25 @@ def load_json(path: str) -> Any:
         return json.load(fh)
 
 
+def select_project_rules(rules: Any) -> dict:
+    if not isinstance(rules, dict):
+        return {}
+    projects = rules.get('project_configurations')
+    if isinstance(projects, list):
+        for project in projects:
+            if isinstance(project, dict):
+                return project
+    if isinstance(projects, dict):
+        if 'project_type' in projects:
+            return projects
+        for key, value in projects.items():
+            if isinstance(value, dict):
+                entry = dict(value)
+                entry.setdefault('project_type', key)
+                return entry
+    return rules
+
+
 def find_git_root(start: Optional[str] = None) -> Optional[str]:
     d = os.path.abspath(start or os.path.dirname(os.path.abspath(__file__)))
     while True:
@@ -75,52 +103,17 @@ def find_git_root(start: Optional[str] = None) -> Optional[str]:
 def git_changed_files(repo_dir: Optional[str] = None) -> List[str]:
     git_root = find_git_root(repo_dir)
     cwd = git_root or os.getcwd()
-    try:
-        proc = subprocess.run(
-            ['git', 'status', '--porcelain=v1', '-uall'],
-            cwd=cwd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-        )
-    except FileNotFoundError:
-        raise RuntimeError('git executable not found')
+    if not get_changed_files:
+        raise RuntimeError('git_file_handler.get_changed_files is unavailable')
 
-    if proc.returncode != 0:
-        raise RuntimeError(f"git failed: {proc.stderr.strip()}")
-
-    paths: List[str] = []
-    for ln in proc.stdout.splitlines():
-        if not ln:
-            continue
-        raw = ln[3:].strip()
-        if raw.startswith('./'):
-            raw = raw[2:]
-        if '->' in raw:
-            raw = raw.split('->')[-1].strip()
-        paths.append(raw)
-
-    try:
-        proc2 = subprocess.run(
-            ['git', 'ls-files', '-o', '--exclude-standard'],
-            cwd=cwd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-        )
-        if proc2.returncode == 0 and proc2.stdout:
-            for ln in proc2.stdout.splitlines():
-                p = ln.strip()
-                if p.startswith('./'):
-                    p = p[2:]
-                if p and p not in paths:
-                    paths.append(p)
-    except FileNotFoundError:
-        pass
-
-    return paths
+    info = get_changed_files(cwd)
+    # flatten info dict into a stable list preserving a sensible order
+    out: List[str] = []
+    for key in ("created", "added", "modified", "deleted"):
+        for p in info.get(key, []):
+            if p not in out:
+                out.append(p)
+    return out
 
 
 def path_allowed(path: str, allowed_prefixes: Iterable[str]) -> bool:
@@ -137,10 +130,16 @@ def run_check(data: Any) -> int:
         print('Rules file root must be an object', file=sys.stderr)
         return 2
 
-    allowed = data.get('allowed_to_modify', [])
-    not_allowed_includes = data.get('not_allowed_cmake_include_dirs', [])
-    not_allowed_subdirs = data.get('not_allowed_cmake_subdirectories', [])
-    not_allowed_linked_libs = data.get('not_allowed_cmake_linked_libraries', [])
+    project_rules = select_project_rules(data)
+    allowed = project_rules.get('allowed_to_modify', [])
+    cmake_rules = project_rules.get('cmake_rules', {}) if isinstance(project_rules.get('cmake_rules', {}), dict) else {}
+    cmake_guidelines = cmake_rules.get('cmake_overall_guidelines', {}) if isinstance(cmake_rules.get('cmake_overall_guidelines', {}), dict) else {}
+    allow_absolute_paths = bool(cmake_guidelines.get('allow_absolute_paths', False))
+    allow_file_function = bool(cmake_guidelines.get('allow_FILE_function', False))
+
+    not_allowed_includes = cmake_rules.get('not_allowed_cmake_include_dirs', project_rules.get('not_allowed_cmake_include_dirs', []))
+    not_allowed_subdirs = cmake_rules.get('not_allowed_cmake_subdirectories', project_rules.get('not_allowed_cmake_subdirectories', []))
+    not_allowed_linked_libs = cmake_rules.get('not_allowed_cmake_linked_libraries', project_rules.get('not_allowed_cmake_linked_libraries', []))
 
     if not isinstance(allowed, list) or not isinstance(not_allowed_includes, list) or not isinstance(not_allowed_subdirs, list):
         print('Invalid rules: expected lists for allowed_to_modify, not_allowed_cmake_include_dirs and not_allowed_cmake_subdirectories', file=sys.stderr)
@@ -205,6 +204,13 @@ def run_check(data: Any) -> int:
                     name = m.group(1)
                     val = m.group(2).strip()
                     var_map[name] = val
+
+            if not allow_file_function:
+                # Disallow usage of the FILE(...) CMake command in changed CMakeLists.txt
+                file_cmd_rx = re.compile(r"\bfile\s*\(", re.IGNORECASE)
+                for idx_line, cl in enumerate(cleaned_lines, start=1):
+                    if file_cmd_rx.search(cl):
+                        errors_found.append((rel, idx_line, 'FILE(', 'file_command', 'FILE('))
 
             for i, (orig_line, line) in enumerate(zip(lines, cleaned_lines), start=1):
                 # expand known variables (basic replacement)
@@ -272,6 +278,39 @@ def run_check(data: Any) -> int:
                             errors_found.append((rel, start_idx + 1, pat, kind, matched_display))
                     continue
                 idx += 1
+            if not allow_absolute_paths:
+                # Now scan for target_include_directories(...) blocks and flag literal absolute paths
+                idx2 = 0
+                while idx2 < len(cleaned_lines):
+                    ln2 = cleaned_lines[idx2]
+                    if re.search(r'\btarget_include_directories\s*\(', ln2, re.IGNORECASE):
+                        start_idx2 = idx2
+                        paren_count2 = ln2.count('(') - ln2.count(')')
+                        idx2 += 1
+                        # collect the block lines (cleaned, comments removed)
+                        block_lines = [ln2]
+                        while paren_count2 > 0 and idx2 < len(cleaned_lines):
+                            lnn = cleaned_lines[idx2]
+                            paren_count2 += lnn.count('(') - lnn.count(')')
+                            block_lines.append(lnn)
+                            idx2 += 1
+
+                        # Inspect each line in the block for tokens that literally start with '/'
+                        for offset, bline in enumerate(block_lines):
+                            # split into tokens by whitespace and commas
+                            for token in re.split(r'[\s,]+', bline.strip()):
+                                if not token:
+                                    continue
+                                # remove surrounding quotes and trailing paren
+                                t = token.strip().strip('"').strip("'")
+                                t = t.rstrip(')')
+                                # literal absolute path: starts with '/'
+                                if t.startswith('/'):
+                                    # report at the specific line number within the file
+                                    report_line = start_idx2 + offset + 1
+                                    errors_found.append((rel, report_line, t, 'abs_include', t))
+                        continue
+                    idx2 += 1
         except Exception as e:
             print(f"Warning: could not read {rel}: {e}", file=sys.stderr)
 
@@ -280,9 +319,16 @@ def run_check(data: Any) -> int:
             disp = humanize_pattern(excerpt)
             if kind == 'subdirectory':
                 reason = 'Not allowed CMake subdirectory found'
+                print(f"FAIL: {rel}:{lineno}: {reason}: {disp}")
+            elif kind == 'abs_include':
+                reason = 'Absolute include path found'
+                print(f"FAIL: {rel}:{lineno}: {reason}: {disp}")
+            elif kind == 'file_command':
+                reason = 'Use of FILE() command is disallowed'
+                print(f"FAIL: {rel}:{lineno}: {reason}: {disp}")
             else:
                 reason = 'Not allowed CMake include dir found'
-            print(f"FAIL: {rel}:{lineno}: {reason}: {disp}")
+                print(f"FAIL: {rel}:{lineno}: {reason}: {disp}")
         return 1
 
     print('OK')
