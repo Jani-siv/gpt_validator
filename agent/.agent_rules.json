@@ -4,6 +4,7 @@
     "project_type": "zephyr",
     "language": "C/C++",
     "build_system": "cmake",
+    "test_coverage": "80",
     "testframework": {
       "test_runner": {
         "name": "ztester",
@@ -38,23 +39,25 @@
     ".cxx",
     ".cc"
   ],
-  "cmake_overall_guidelines": {
-    "allow_absolute_paths": false,
-    "allow_FILE_function": false
-  },
-  "not_allowed_cmake_include_dirs": [
-    "tests/unit_tests",
-    "${ZEPHYR_BASE}/include/",
-    "register_c_lite/wrappers/"
-  ],
-  "not_allowed_cmake_linked_libraries": [
-    "nokia_soclogger",
-    "DPDRegWrapLib",
-    "Sdc002RegbankRegs",
-    "parest_dyn_clk_driver",
-    "sdc_service"
-  ],
-  "not_allowed_cmake_subdirectories": [
-    "../../../"
-  ]
+  "cmake_rules": {
+    "cmake_overall_guidelines": {
+      "allow_absolute_paths": false,
+      "allow_FILE_function": false
+    },
+    "not_allowed_cmake_include_dirs": [
+      "tests/unit_tests",
+      "${ZEPHYR_BASE}/include/",
+      "register_c_lite/wrappers/"
+    ],
+    "not_allowed_cmake_linked_libraries": [
+      "nokia_soclogger",
+      "DPDRegWrapLib",
+      "Sdc002RegbankRegs",
+      "parest_dyn_clk_driver",
+      "sdc_service"
+    ],
+    "not_allowed_cmake_subdirectories": [
+      "../../../"
+    ]
+  }
 }

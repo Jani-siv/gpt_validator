@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 import re
 from typing import Any, Iterable, List, Optional
@@ -82,61 +81,16 @@ def find_git_root(start: Optional[str] = None) -> Optional[str]:
 def git_changed_files(repo_dir: Optional[str] = None) -> List[str]:
     git_root = find_git_root(repo_dir)
     cwd = git_root or os.getcwd()
-    if get_changed_files:
-        info = get_changed_files(cwd)
-        out: List[str] = []
-        for key in ("created", "added", "modified", "deleted"):
-            for p in info.get(key, []):
-                if p not in out:
-                    out.append(p)
-        return out
+    if not get_changed_files:
+        raise RuntimeError('git_file_handler.get_changed_files is unavailable')
 
-    try:
-        proc = subprocess.run(
-            ['git', 'status', '--porcelain=v1', '-uall'],
-            cwd=cwd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-        )
-    except FileNotFoundError:
-        raise RuntimeError('git executable not found')
-
-    if proc.returncode != 0:
-        raise RuntimeError(f"git failed: {proc.stderr.strip()}")
-
-    paths: List[str] = []
-    for ln in proc.stdout.splitlines():
-        if not ln:
-            continue
-        raw = ln[3:].strip()
-        if raw.startswith('./'):
-            raw = raw[2:]
-        if '->' in raw:
-            raw = raw.split('->')[-1].strip()
-        paths.append(raw)
-
-    try:
-        proc2 = subprocess.run(
-            ['git', 'ls-files', '-o', '--exclude-standard'],
-            cwd=cwd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-        )
-        if proc2.returncode == 0 and proc2.stdout:
-            for ln in proc2.stdout.splitlines():
-                p = ln.strip()
-                if p.startswith('./'):
-                    p = p[2:]
-                if p and p not in paths:
-                    paths.append(p)
-    except FileNotFoundError:
-        pass
-
-    return paths
+    info = get_changed_files(cwd)
+    out: List[str] = []
+    for key in ("created", "added", "modified", "deleted"):
+        for p in info.get(key, []):
+            if p not in out:
+                out.append(p)
+    return out
 
 
 def path_allowed(path: str, allowed_prefixes: Iterable[str]) -> bool:

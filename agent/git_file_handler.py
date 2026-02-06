@@ -28,17 +28,16 @@ __all__ = [
 ]
 
 
-def _run_git_status_porcelain(path: str) -> List[str]:
-	"""Run `git status --porcelain -z -- <path>` and return list of entries.
+def _run_git_status_porcelain(repo_dir: str) -> List[str]:
+	"""Run `git status --porcelain=v1 -uall` and return list of entries.
 
-	Each entry is a porcelain token separated by NUL. Tokens are either
+	Each entry is a porcelain line. Lines are either
 	- '?? <file>' for untracked files, or
 	- 'XY <file>' where X is staged status and Y is unstaged status.
 	"""
 	try:
 		proc = subprocess.run(
-			["git", "status", "--porcelain", "-z", "--", path],
-			cwd=None,
+			["git", "-C", repo_dir, "status", "--porcelain=v1", "-uall"],
 			check=True,
 			capture_output=True,
 			text=True,
@@ -46,9 +45,22 @@ def _run_git_status_porcelain(path: str) -> List[str]:
 	except subprocess.CalledProcessError:
 		return []
 
-	# Split on NUL and remove any empty tokens
-	tokens = [tok for tok in proc.stdout.split("\0") if tok]
-	return tokens
+	return [ln for ln in proc.stdout.splitlines() if ln]
+
+
+def _run_git_ls_files(repo_dir: str) -> List[str]:
+	"""Run `git ls-files -o --exclude-standard` and return list of entries."""
+	try:
+		proc = subprocess.run(
+			["git", "-C", repo_dir, "ls-files", "-o", "--exclude-standard"],
+			check=True,
+			capture_output=True,
+			text=True,
+		)
+	except subprocess.CalledProcessError:
+		return []
+
+	return [ln for ln in proc.stdout.splitlines() if ln]
 
 
 def _normalize_filename_from_token(tok: str) -> tuple[str, str]:
@@ -82,15 +94,15 @@ def get_changed_files(path: str) -> Dict[str, List[str]]:
 	- `modified` contains files modified either staged or unstaged (X or Y == 'M').
 	- `deleted` contains files deleted (X or Y == 'D').
 	"""
-	tokens = _run_git_status_porcelain(path)
+	lines = _run_git_status_porcelain(path)
 
 	created: Set[str] = set()
 	added: Set[str] = set()
 	modified: Set[str] = set()
 	deleted: Set[str] = set()
 
-	for tok in tokens:
-		status, fname = _normalize_filename_from_token(tok)
+	for line in lines:
+		status, fname = _normalize_filename_from_token(line)
 
 		if status == "??":
 			created.add(fname)
@@ -108,6 +120,13 @@ def get_changed_files(path: str) -> Dict[str, List[str]]:
 
 		if x == "D" or y == "D":
 			deleted.add(fname)
+
+	for fname in _run_git_ls_files(path):
+		name = fname
+		if name.startswith('./'):
+			name = name[2:]
+		if name:
+			created.add(name)
 
 	return {
 		"created": sorted(created),

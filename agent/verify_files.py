@@ -11,7 +11,6 @@ import argparse
 import json
 import os
 import sys
-import subprocess
 from pathlib import Path
 import fnmatch
 from typing import Iterable, List, Any
@@ -49,42 +48,28 @@ def git_modified_files(repo_dir: str) -> List[str]:
 
 	Includes staged and unstaged changes. Raises CalledProcessError if git fails.
 	"""
-	if get_changed_files:
-		info = get_changed_files(repo_dir)
-		# return staged/unstaged modifications and adds/deletes similar to original behavior
-		res = []
-		for k in ("modified", "added", "deleted"):
-			for p in info.get(k, []):
-				if p not in res:
-					res.append(p)
-		return res
+	if not get_changed_files:
+		raise RuntimeError('git_file_handler.get_changed_files is unavailable')
 
-	repo = Path(repo_dir)
-	# Fallback: shell out to git if import failed
-	out = subprocess.check_output(["git", "-C", str(repo), "status", "--porcelain"], text=True)
-	modified: List[str] = []
-	for line in out.splitlines():
-		if not line.strip():
-			continue
-		parts = line[3:]
-		if "->" in parts:
-			parts = parts.split("->", 1)[1].strip()
-		modified.append(parts)
-	return modified
+	info = get_changed_files(repo_dir)
+	# return staged/unstaged modifications and adds/deletes similar to original behavior
+	res: List[str] = []
+	for k in ("modified", "added", "deleted"):
+		for p in info.get(k, []):
+			if p not in res:
+				res.append(p)
+	return res
 
 
 def git_untracked_files(repo_dir: str) -> List[str]:
 	"""Return a list of untracked file paths (relative to repo_dir)."""
-	if get_changed_files:
-		info = get_changed_files(repo_dir)
-		created = set(info.get("created", []))
-		added = set(info.get("added", []))
-		untracked = sorted(created - added)
-		return untracked
+	if not get_changed_files:
+		raise RuntimeError('git_file_handler.get_changed_files is unavailable')
 
-	repo = Path(repo_dir)
-	out = subprocess.check_output(["git", "-C", str(repo), "ls-files", "--others", "--exclude-standard"], text=True)
-	return [line.strip() for line in out.splitlines() if line.strip()]
+	info = get_changed_files(repo_dir)
+	created = set(info.get("created", []))
+	added = set(info.get("added", []))
+	return sorted(created - added)
 
 
 def is_file_modified(repo_dir: str, target_path: str) -> bool:
@@ -119,7 +104,7 @@ def disallowed_modified_files(repo_dir: str, agent_rules_path: str) -> List[str]
 	# Also include untracked files explicitly
 	try:
 		untracked = git_untracked_files(repo_dir)
-	except subprocess.CalledProcessError:
+	except RuntimeError:
 		untracked = []
 
 	# Merge lists while normalizing paths for comparison
