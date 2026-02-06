@@ -1,6 +1,28 @@
 {
+  "version": "0.1",
+  "project_configurations": [{
+    "project_type": "zephyr",
+    "language": "C/C++",
+    "build_system": "cmake",
+    "testframework": {
+      "test_runner": {
+        "name": "ztester",
+        "info": "test need to be provided as param to the command and path is from zephyr_main_app root (e.g. ztests/test_sample)",
+        "command": "python run_tests.py",
+        "execute_path": "zephyr_main_app/ztests/"
+      },
+      "test_builder": {
+        "name": "zbuilder",
+        "info": "test need to be provided as param to the command and path is from zephyr_main_app root (e.g. ztests/test_sample)",
+        "command": "python run_tests.py -b",
+        "execute_path": "zephyr_main_app/ztests/"
+      }
+    }
+  }],
   "allowed_to_modify": [
-    "zephyr_main_app"
+    "zephyr_main_app/ztests/",
+    "zephyr_main_app/unit_tests/",
+    "zephyr_main_app/unit_tests/mock_files"
   ],
   "ignored_files": [
     "*.md",
@@ -8,17 +30,29 @@
     "*.json"
   ],
   "not_allowed_header_includes": [
-    "zephyr.h"
+    "zephyr.h",
+    "register_c_lite/wrappers/"
   ],
   "not_allowed_include_extensions": [
     ".cpp",
     ".cxx",
     ".cc"
   ],
+  "cmake_overall_guidelines": {
+    "allow_absolute_paths": false,
+    "allow_FILE_function": false
+  },
   "not_allowed_cmake_include_dirs": [
-    "tests/unit_tests"
+    "tests/unit_tests",
+    "${ZEPHYR_BASE}/include/",
+    "register_c_lite/wrappers/"
   ],
   "not_allowed_cmake_linked_libraries": [
+    "nokia_soclogger",
+    "DPDRegWrapLib",
+    "Sdc002RegbankRegs",
+    "parest_dyn_clk_driver",
+    "sdc_service"
   ],
   "not_allowed_cmake_subdirectories": [
     "../../../"
