@@ -23,7 +23,7 @@
       "file_rules": {
         "allowed_to_modify": [
           "zephyr_main_app/ztests/",
-          "zephyr_mti_toolsain_app/unit_tests/",
+          "zephyr_main_app/unit_tests/",
           "zephyr_main_app/unit_tests/mock_files"
         ],
         "ignored_files": [

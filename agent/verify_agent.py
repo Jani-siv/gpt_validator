@@ -126,6 +126,25 @@ def extract_command_and_path(container: dict, prefix: str) -> tuple[str | None, 
 	return command, execute_path
 
 
+def normalize_zephyr_command(command: str, mode: str, project_type: str) -> str:
+	if project_type != 'zephyr':
+		return command
+	parts = shlex.split(command)
+	if not any(part.endswith('run_tests.py') for part in parts):
+		return command
+
+	updated = []
+	for part in parts:
+		if mode == 'run' and part == '--run_test':
+			continue
+		if mode == 'build' and part == '--build':
+			updated.append('--build-only')
+			continue
+		updated.append(part)
+
+	return ' '.join(shlex.quote(part) for part in updated)
+
+
 def main() -> int:
 	here = os.path.dirname(os.path.abspath(__file__))
 	parser = argparse.ArgumentParser(description='Run verification steps and optionally build a unit test')
@@ -162,6 +181,7 @@ def main() -> int:
 
 	# If requested, run build step after successful checks
 	if args.build is not None:
+		project_type = str(project_config.get('project_type', '')).lower() if project_config else ''
 		testframework = read_test_framework(project_config)
 		builder = {}
 		if isinstance(testframework, dict):
@@ -186,6 +206,7 @@ def main() -> int:
 
 		repo_root = os.path.abspath(os.path.join(here, '..', '..', '..'))
 		cwd = execute_path if os.path.isabs(execute_path) else os.path.join(repo_root, execute_path)
+		command = normalize_zephyr_command(command, 'build', project_type)
 		build_path = args.build
 		extra_args = [build_path] if build_path else []
 		cmd = build_command(command, extra_args, here, cwd)
@@ -200,6 +221,7 @@ def main() -> int:
 
 	# If requested, run test step after successful checks
 	if args.run_test is not None:
+		project_type = str(project_config.get('project_type', '')).lower() if project_config else ''
 		testframework = read_test_framework(project_config)
 		runner = {}
 		if isinstance(testframework, dict):
@@ -224,6 +246,7 @@ def main() -> int:
 
 		repo_root = os.path.abspath(os.path.join(here, '..', '..', '..'))
 		cwd = execute_path if os.path.isabs(execute_path) else os.path.join(repo_root, execute_path)
+		command = normalize_zephyr_command(command, 'run', project_type)
 		test_path = args.run_test
 		extra_args = [test_path] if test_path else []
 		cmd = build_command(command, extra_args, here, cwd)
@@ -233,7 +256,6 @@ def main() -> int:
 			print(proc.stdout, end='')
 		if proc.returncode != 0:
 			return 1
-		project_type = str(project_config.get('project_type', '')).lower() if project_config else ''
 		if project_type == 'zephyr':
 			# Tests passed - run coverage verifier script located next to this driver.
 			verifier = os.path.join(here, 'zephyr_verify_coverage.py')
