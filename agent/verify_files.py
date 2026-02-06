@@ -97,8 +97,11 @@ def disallowed_modified_files(repo_dir: str, agent_rules_path: str) -> List[str]
 	"""
 	# Load rules
 	rules = load_agent_rules(agent_rules_path)
-	allowed = rules.get("allowed_to_modify", []) if isinstance(rules, dict) else []
-	ignored = rules.get("ignored_files", []) if isinstance(rules, dict) else []
+	file_rules = rules.get("file_rules", {}) if isinstance(rules, dict) else {}
+	if not isinstance(file_rules, dict):
+		file_rules = {}
+	allowed = file_rules.get("allowed_to_modify", rules.get("allowed_to_modify", []) if isinstance(rules, dict) else [])
+	ignored = file_rules.get("ignored_files", rules.get("ignored_files", []) if isinstance(rules, dict) else [])
 
 	modified = git_modified_files(repo_dir)
 	# Also include untracked files explicitly
@@ -200,7 +203,10 @@ def main() -> int:
 			except json.JSONDecodeError as exc:
 				print(f"Failed to parse agent rules JSON: {exc}")
 				return 1
-			allowed = rules.get("allowed_to_modify", []) if isinstance(rules, dict) else []
+			file_rules = rules.get("file_rules", {}) if isinstance(rules, dict) else {}
+			if not isinstance(file_rules, dict):
+				file_rules = {}
+			allowed = file_rules.get("allowed_to_modify", rules.get("allowed_to_modify", []) if isinstance(rules, dict) else [])
 			for a in allowed:
 				print(a)
 			return 0
@@ -213,7 +219,10 @@ def main() -> int:
 			except json.JSONDecodeError as exc:
 				print(f"Failed to parse agent rules JSON: {exc}")
 				return 1
-			ignored = rules.get("ignored_files", []) if isinstance(rules, dict) else []
+			file_rules = rules.get("file_rules", {}) if isinstance(rules, dict) else {}
+			if not isinstance(file_rules, dict):
+				file_rules = {}
+			ignored = file_rules.get("ignored_files", rules.get("ignored_files", []) if isinstance(rules, dict) else [])
 			for p in ignored:
 				print(p)
 			return 0

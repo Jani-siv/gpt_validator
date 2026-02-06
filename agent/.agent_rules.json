@@ -20,25 +20,29 @@
       }
     }
   }],
-  "allowed_to_modify": [
-    "zephyr_main_app/ztests/",
-    "zephyr_main_app/unit_tests/",
-    "zephyr_main_app/unit_tests/mock_files"
-  ],
-  "ignored_files": [
-    "*.md",
-    "*.txt",
-    "*.json"
-  ],
-  "not_allowed_header_includes": [
-    "zephyr.h",
-    "register_c_lite/wrappers/"
-  ],
-  "not_allowed_include_extensions": [
-    ".cpp",
-    ".cxx",
-    ".cc"
-  ],
+  "file_rules": {
+    "allowed_to_modify": [
+      "zephyr_main_app/ztests/",
+      "zephyr_main_app/unit_tests/",
+      "zephyr_main_app/unit_tests/mock_files"
+    ],
+    "ignored_files": [
+      "*.md",
+      "*.txt",
+      "*.json"
+    ]
+  },
+  "cpp_code_rules": {
+    "not_allowed_header_includes": [
+      "zephyr.h",
+      "register_c_lite/wrappers/"
+    ],
+    "not_allowed_include_extensions": [
+      ".cpp",
+      ".cxx",
+      ".cc"
+    ]
+  },
   "cmake_rules": {
     "cmake_overall_guidelines": {
       "allow_absolute_paths": false,

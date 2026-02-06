@@ -107,10 +107,13 @@ def run_check(data: Any) -> int:
         print('Rules file root must be an object', file=sys.stderr)
         return 2
 
-    allowed = data.get('allowed_to_modify', [])
-    not_allowed = data.get('not_allowed_header_includes', [])
-    not_allowed_exts = data.get('not_allowed_include_extensions', [])
-    ignored = data.get('ignored_files', [])
+    file_rules = data.get('file_rules', {}) if isinstance(data.get('file_rules', {}), dict) else {}
+    cpp_rules = data.get('cpp_code_rules', {}) if isinstance(data.get('cpp_code_rules', {}), dict) else {}
+
+    allowed = file_rules.get('allowed_to_modify', data.get('allowed_to_modify', []))
+    ignored = file_rules.get('ignored_files', data.get('ignored_files', []))
+    not_allowed = cpp_rules.get('not_allowed_header_includes', data.get('not_allowed_header_includes', []))
+    not_allowed_exts = cpp_rules.get('not_allowed_include_extensions', data.get('not_allowed_include_extensions', []))
     
 
     if not isinstance(allowed, list) or not isinstance(not_allowed, list):
