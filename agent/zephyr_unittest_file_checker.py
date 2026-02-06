@@ -52,6 +52,25 @@ def load_json(path: str) -> Any:
         return json.load(fh)
 
 
+def select_project_rules(rules: Any) -> dict:
+    if not isinstance(rules, dict):
+        return {}
+    projects = rules.get('project_configurations')
+    if isinstance(projects, list):
+        for project in projects:
+            if isinstance(project, dict):
+                return project
+    if isinstance(projects, dict):
+        if 'project_type' in projects:
+            return projects
+        for key, value in projects.items():
+            if isinstance(value, dict):
+                entry = dict(value)
+                entry.setdefault('project_type', key)
+                return entry
+    return rules
+
+
 def main() -> int:
     path = default_agent_rules_path()
     if not os.path.exists(path):
@@ -107,13 +126,14 @@ def run_check(data: Any) -> int:
         print('Rules file root must be an object', file=sys.stderr)
         return 2
 
-    file_rules = data.get('file_rules', {}) if isinstance(data.get('file_rules', {}), dict) else {}
-    cpp_rules = data.get('cpp_code_rules', {}) if isinstance(data.get('cpp_code_rules', {}), dict) else {}
+    project_rules = select_project_rules(data)
+    file_rules = project_rules.get('file_rules', {}) if isinstance(project_rules.get('file_rules', {}), dict) else {}
+    cpp_rules = project_rules.get('cpp_code_rules', {}) if isinstance(project_rules.get('cpp_code_rules', {}), dict) else {}
 
-    allowed = file_rules.get('allowed_to_modify', data.get('allowed_to_modify', []))
-    ignored = file_rules.get('ignored_files', data.get('ignored_files', []))
-    not_allowed = cpp_rules.get('not_allowed_header_includes', data.get('not_allowed_header_includes', []))
-    not_allowed_exts = cpp_rules.get('not_allowed_include_extensions', data.get('not_allowed_include_extensions', []))
+    allowed = file_rules.get('allowed_to_modify', project_rules.get('allowed_to_modify', []))
+    ignored = file_rules.get('ignored_files', project_rules.get('ignored_files', []))
+    not_allowed = cpp_rules.get('not_allowed_header_includes', project_rules.get('not_allowed_header_includes', []))
+    not_allowed_exts = cpp_rules.get('not_allowed_include_extensions', project_rules.get('not_allowed_include_extensions', []))
     
 
     if not isinstance(allowed, list) or not isinstance(not_allowed, list):

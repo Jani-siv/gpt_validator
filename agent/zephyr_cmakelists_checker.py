@@ -70,6 +70,25 @@ def load_json(path: str) -> Any:
         return json.load(fh)
 
 
+def select_project_rules(rules: Any) -> dict:
+    if not isinstance(rules, dict):
+        return {}
+    projects = rules.get('project_configurations')
+    if isinstance(projects, list):
+        for project in projects:
+            if isinstance(project, dict):
+                return project
+    if isinstance(projects, dict):
+        if 'project_type' in projects:
+            return projects
+        for key, value in projects.items():
+            if isinstance(value, dict):
+                entry = dict(value)
+                entry.setdefault('project_type', key)
+                return entry
+    return rules
+
+
 def find_git_root(start: Optional[str] = None) -> Optional[str]:
     d = os.path.abspath(start or os.path.dirname(os.path.abspath(__file__)))
     while True:
@@ -111,15 +130,16 @@ def run_check(data: Any) -> int:
         print('Rules file root must be an object', file=sys.stderr)
         return 2
 
-    allowed = data.get('allowed_to_modify', [])
-    cmake_rules = data.get('cmake_rules', {}) if isinstance(data.get('cmake_rules', {}), dict) else {}
+    project_rules = select_project_rules(data)
+    allowed = project_rules.get('allowed_to_modify', [])
+    cmake_rules = project_rules.get('cmake_rules', {}) if isinstance(project_rules.get('cmake_rules', {}), dict) else {}
     cmake_guidelines = cmake_rules.get('cmake_overall_guidelines', {}) if isinstance(cmake_rules.get('cmake_overall_guidelines', {}), dict) else {}
     allow_absolute_paths = bool(cmake_guidelines.get('allow_absolute_paths', False))
     allow_file_function = bool(cmake_guidelines.get('allow_FILE_function', False))
 
-    not_allowed_includes = cmake_rules.get('not_allowed_cmake_include_dirs', data.get('not_allowed_cmake_include_dirs', []))
-    not_allowed_subdirs = cmake_rules.get('not_allowed_cmake_subdirectories', data.get('not_allowed_cmake_subdirectories', []))
-    not_allowed_linked_libs = cmake_rules.get('not_allowed_cmake_linked_libraries', data.get('not_allowed_cmake_linked_libraries', []))
+    not_allowed_includes = cmake_rules.get('not_allowed_cmake_include_dirs', project_rules.get('not_allowed_cmake_include_dirs', []))
+    not_allowed_subdirs = cmake_rules.get('not_allowed_cmake_subdirectories', project_rules.get('not_allowed_cmake_subdirectories', []))
+    not_allowed_linked_libs = cmake_rules.get('not_allowed_cmake_linked_libraries', project_rules.get('not_allowed_cmake_linked_libraries', []))
 
     if not isinstance(allowed, list) or not isinstance(not_allowed_includes, list) or not isinstance(not_allowed_subdirs, list):
         print('Invalid rules: expected lists for allowed_to_modify, not_allowed_cmake_include_dirs and not_allowed_cmake_subdirectories', file=sys.stderr)

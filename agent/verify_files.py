@@ -43,6 +43,25 @@ def load_agent_rules(path: str) -> Any:
 		return json.load(fh)
 
 
+def select_project_rules(rules: Any) -> dict:
+	if not isinstance(rules, dict):
+		return {}
+	projects = rules.get("project_configurations")
+	if isinstance(projects, list):
+		for project in projects:
+			if isinstance(project, dict):
+				return project
+	if isinstance(projects, dict):
+		if "project_type" in projects:
+			return projects
+		for key, value in projects.items():
+			if isinstance(value, dict):
+				entry = dict(value)
+				entry.setdefault("project_type", key)
+				return entry
+	return rules
+
+
 def git_modified_files(repo_dir: str) -> List[str]:
 	"""Return a list of modified file paths (relative to repo_dir) according to `git status --porcelain`.
 
@@ -97,11 +116,12 @@ def disallowed_modified_files(repo_dir: str, agent_rules_path: str) -> List[str]
 	"""
 	# Load rules
 	rules = load_agent_rules(agent_rules_path)
-	file_rules = rules.get("file_rules", {}) if isinstance(rules, dict) else {}
+	project_rules = select_project_rules(rules)
+	file_rules = project_rules.get("file_rules", {}) if isinstance(project_rules, dict) else {}
 	if not isinstance(file_rules, dict):
 		file_rules = {}
-	allowed = file_rules.get("allowed_to_modify", rules.get("allowed_to_modify", []) if isinstance(rules, dict) else [])
-	ignored = file_rules.get("ignored_files", rules.get("ignored_files", []) if isinstance(rules, dict) else [])
+	allowed = file_rules.get("allowed_to_modify", project_rules.get("allowed_to_modify", []) if isinstance(project_rules, dict) else [])
+	ignored = file_rules.get("ignored_files", project_rules.get("ignored_files", []) if isinstance(project_rules, dict) else [])
 
 	modified = git_modified_files(repo_dir)
 	# Also include untracked files explicitly
@@ -203,10 +223,11 @@ def main() -> int:
 			except json.JSONDecodeError as exc:
 				print(f"Failed to parse agent rules JSON: {exc}")
 				return 1
-			file_rules = rules.get("file_rules", {}) if isinstance(rules, dict) else {}
+			project_rules = select_project_rules(rules)
+			file_rules = project_rules.get("file_rules", {}) if isinstance(project_rules, dict) else {}
 			if not isinstance(file_rules, dict):
 				file_rules = {}
-			allowed = file_rules.get("allowed_to_modify", rules.get("allowed_to_modify", []) if isinstance(rules, dict) else [])
+			allowed = file_rules.get("allowed_to_modify", project_rules.get("allowed_to_modify", []) if isinstance(project_rules, dict) else [])
 			for a in allowed:
 				print(a)
 			return 0
@@ -219,10 +240,11 @@ def main() -> int:
 			except json.JSONDecodeError as exc:
 				print(f"Failed to parse agent rules JSON: {exc}")
 				return 1
-			file_rules = rules.get("file_rules", {}) if isinstance(rules, dict) else {}
+			project_rules = select_project_rules(rules)
+			file_rules = project_rules.get("file_rules", {}) if isinstance(project_rules, dict) else {}
 			if not isinstance(file_rules, dict):
 				file_rules = {}
-			ignored = file_rules.get("ignored_files", rules.get("ignored_files", []) if isinstance(rules, dict) else [])
+			ignored = file_rules.get("ignored_files", project_rules.get("ignored_files", []) if isinstance(project_rules, dict) else [])
 			for p in ignored:
 				print(p)
 			return 0

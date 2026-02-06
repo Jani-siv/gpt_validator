@@ -18,8 +18,7 @@
         "command": "python run_tests.py -b",
         "execute_path": "zephyr_main_app/ztests/"
       }
-    }
-  }],
+    },
   "file_rules": {
     "allowed_to_modify": [
       "zephyr_main_app/ztests/",
@@ -64,4 +63,5 @@
       "../../../"
     ]
   }
+   }]
 }
