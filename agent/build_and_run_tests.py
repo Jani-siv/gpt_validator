@@ -41,6 +41,24 @@ def get_execute_path(rules, project_type: str):
     return None, None
 
 
+class TestRunner:
+    def __init__(self,project="", testFrameworkConfig=None):
+        self.project = project
+        self.framework = testFrameworkConfig
+
+
+class TestFrameworkConfig:
+    def __init__(self, test_runner=None, test_builder=None):
+        self.test_runner = {}
+        self.test_runner["name"] = test_runner.get("name") if test_runner else None
+        self.test_runner["command"] = test_runner.get("command") if test_runner else None
+        self.test_runner["execute_path"] = test_runner.get("execute_path") if test_runner else None
+        self.test_builder = {}
+        self.test_builder["name"] = test_builder.get("name") if test_builder else None
+        self.test_builder["command"] = test_builder.get("command") if test_builder else None
+        self.test_builder["execute_path"] = test_builder.get("execute_path") if test_builder else None
+
+
 def run(cmd, cwd=None, env=None, capture_output=False):
     print(f"+ Running: {' '.join(cmd)} (cwd={cwd})")
     if capture_output:
@@ -127,6 +145,7 @@ def main():
     p.add_argument("--project-type", default="dti_tools", help="project_type to use from .agent_rules.json")
     p.add_argument("--rules", default=None, help="path to .agent_rules.json (defaults to script dir)")
     p.add_argument("--build", action="store_true", help="only perform the build step")
+    p.add_argument("--build-only", dest="build", action="store_true", help="alias for --build")
     p.add_argument("--run_tests", action="store_true", help="only run tests (ctest)")
     compiler_group = p.add_mutually_exclusive_group()
     compiler_group.add_argument(
