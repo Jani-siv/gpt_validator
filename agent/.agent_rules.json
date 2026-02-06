@@ -1,67 +1,106 @@
 {
   "version": "0.1",
-  "project_configurations": [{
-    "project_type": "zephyr",
-    "language": "C/C++",
-    "build_system": "cmake",
-    "test_coverage": "80",
-    "testframework": {
-      "test_runner": {
-        "name": "ztester",
-        "info": "test need to be provided as param to the command and path is from zephyr_main_app root (e.g. ztests/test_sample)",
-        "command": "python run_tests.py",
-        "execute_path": "zephyr_main_app/ztests/"
+  "project_configurations": [
+    {
+      "project_type": "zephyr",
+      "language": "C/C++",
+      "build_system": "cmake",
+      "test_coverage": "80",
+      "testframework": {
+        "test_runner": {
+          "name": "ztester",
+          "info": "test need to be provided as param to the command and path is from zephyr_main_app root (e.g. ztests/test_sample)",
+          "command": "python run_tests.py",
+          "execute_path": "zephyr_main_app/ztests/"
+        },
+        "test_builder": {
+          "name": "zbuilder",
+          "info": "test need to be provided as param to the command and path is from zephyr_main_app root (e.g. ztests/test_sample)",
+          "command": "python run_tests.py -b",
+          "execute_path": "zephyr_main_app/ztests/"
+        }
       },
-      "test_builder": {
-        "name": "zbuilder",
-        "info": "test need to be provided as param to the command and path is from zephyr_main_app root (e.g. ztests/test_sample)",
-        "command": "python run_tests.py -b",
-        "execute_path": "zephyr_main_app/ztests/"
+      "file_rules": {
+        "allowed_to_modify": [
+          "zephyr_main_app/ztests/",
+          "zephyr_mti_toolsain_app/unit_tests/",
+          "zephyr_main_app/unit_tests/mock_files"
+        ],
+        "ignored_files": [
+          "*.md",
+          "*.txt",
+          "*.json"
+        ]
+      },
+      "cpp_code_rules": {
+        "not_allowed_header_includes": [
+          "zephyr.h",
+          "register_c_lite/wrappers/"
+        ],
+        "not_allowed_include_extensions": [
+          ".cpp",
+          ".cxx",
+          ".cc"
+        ]
+      },
+      "cmake_rules": {
+        "cmake_overall_guidelines": {
+          "allow_absolute_paths": false,
+          "allow_FILE_function": false
+        },
+        "not_allowed_cmake_include_dirs": [
+          "tests/unit_tests",
+          "${ZEPHYR_BASE}/include/",
+          "register_c_lite/wrappers/"
+        ],
+        "not_allowed_cmake_linked_libraries": [
+          "nokia_soclogger",
+          "DPDRegWrapLib",
+          "Sdc002RegbankRegs",
+          "parest_dyn_clk_driver",
+          "sdc_service"
+        ],
+        "not_allowed_cmake_subdirectories": [
+          "../../../"
+        ]
       }
     },
-  "file_rules": {
-    "allowed_to_modify": [
-      "zephyr_main_app/ztests/",
-      "zephyr_main_app/unit_tests/",
-      "zephyr_main_app/unit_tests/mock_files"
-    ],
-    "ignored_files": [
-      "*.md",
-      "*.txt",
-      "*.json"
-    ]
-  },
-  "cpp_code_rules": {
-    "not_allowed_header_includes": [
-      "zephyr.h",
-      "register_c_lite/wrappers/"
-    ],
-    "not_allowed_include_extensions": [
-      ".cpp",
-      ".cxx",
-      ".cc"
-    ]
-  },
-  "cmake_rules": {
-    "cmake_overall_guidelines": {
-      "allow_absolute_paths": false,
-      "allow_FILE_function": false
-    },
-    "not_allowed_cmake_include_dirs": [
-      "tests/unit_tests",
-      "${ZEPHYR_BASE}/include/",
-      "register_c_lite/wrappers/"
-    ],
-    "not_allowed_cmake_linked_libraries": [
-      "nokia_soclogger",
-      "DPDRegWrapLib",
-      "Sdc002RegbankRegs",
-      "parest_dyn_clk_driver",
-      "sdc_service"
-    ],
-    "not_allowed_cmake_subdirectories": [
-      "../../../"
-    ]
-  }
-   }]
+    {
+      "project_type": "dti_tools",
+      "language": "C/C++",
+      "build_system": "cmake",
+      "test_coverage": "0",
+      "testframework": {
+        "test_runner": {
+          "name": "test_runner",
+          "info": "Provide test path as parameter",
+          "command": "echo \"run tests\"",
+          "execute_path": "tools/dti_tools/"
+        },
+        "test_builder": {
+          "name": "test_builder",
+          "info": "Provide build options if needed",
+          "command": "echo \"build tests\"",
+          "execute_path": "tools/dti_tools/"
+        }
+      },
+      "file_rules": {
+        "allowed_to_modify": [],
+        "ignored_files": []
+      },
+      "cpp_code_rules": {
+        "not_allowed_header_includes": [],
+        "not_allowed_include_extensions": []
+      },
+      "cmake_rules": {
+        "cmake_overall_guidelines": {
+          "allow_absolute_paths": false,
+          "allow_FILE_function": false
+        },
+        "not_allowed_cmake_include_dirs": [],
+        "not_allowed_cmake_linked_libraries": [],
+        "not_allowed_cmake_subdirectories": []
+      }
+    }
+  ]
 }
