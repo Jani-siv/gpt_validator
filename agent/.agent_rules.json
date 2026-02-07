@@ -11,13 +11,17 @@
           "name": "ztester",
           "info": "test need to be provided as param to the command and path is from zephyr_main_app root (e.g. ztests/test_sample)",
           "command": "python run_tests.py --run_test",
-          "execute_path": "zephyr_main_app/ztests/"
+          "execute_path": "zephyr_main_app/ztests/",
+          "build_path": "zephyr_main_app/ztests/build/"
         },
         "test_builder": {
           "name": "zbuilder",
+          "gcc_builder": false,
           "info": "test need to be provided as param to the command and path is from zephyr_main_app root (e.g. ztests/test_sample)",
           "command": "python run_tests.py --build",
-          "execute_path": "zephyr_main_app/ztests/"
+          "execute_path": "zephyr_main_app/ztests/",
+          "build_path": "zephyr_main_app/ztests/build/",
+          "compiler_flags": []
         }
       },
       "file_rules": {
@@ -75,13 +79,17 @@
           "name": "test_runner",
           "info": "Runs dti_tools unit tests",
           "command": "build_and_run_tests.py --run_tests",
-          "execute_path": "tools/dti_tools/"
+          "execute_path": "tools/dti_tools/",
+          "build_path": "tools/dti_tools/build/"
         },
         "test_builder": {
           "name": "test_builder",
           "info": "Builds dti_tools unit tests",
+          "gcc_builder": true,
           "command": "build_and_run_tests.py --build",
-          "execute_path": "tools/dti_tools/"
+          "compiler_flags": ["-DUNIT_TESTS=ON"],
+          "execute_path": "tools/dti_tools/",
+          "build_path": "tools/dti_tools/build/"
         }
       },
       "file_rules": {
