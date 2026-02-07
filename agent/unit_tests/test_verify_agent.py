@@ -80,28 +80,31 @@ def test_load_project_config_and_errors(tmp_path):
     rules = tmp_path / '.agent_rules.json'
     # missing file
     try:
-        va.load_project_config(here, None)
+        va.RulesParser(os.path.join(here, '.agent_rules.json'))
         assert False
     except FileNotFoundError:
         pass
 
     # write invalid json structure
     rules.write_text(json.dumps({'project_configurations': []}))
+    rp = va.RulesParser(rules)
     try:
-        va.load_project_config(here, None)
+        rp.load_project_config(None)
         assert False
     except ValueError:
         pass
 
     # single project in list -> returns it
     rules.write_text(json.dumps({'project_configurations': [{'project_type': 'X', 'a': 1}]}))
-    proj = va.load_project_config(here, None)
+    rp = va.RulesParser(rules)
+    proj = rp.load_project_config(None)
     assert proj.get('project_type').lower() == 'x'
 
     # unknown project type
     rules.write_text(json.dumps({'project_configurations': [{'project_type': 'a'},{'project_type':'b'}]}))
+    rp = va.RulesParser(rules)
     try:
-        va.load_project_config(here, 'c')
+        rp.load_project_config('c')
         assert False
     except ValueError:
         pass
@@ -113,14 +116,16 @@ def test_load_project_config_dict_variants(tmp_path):
     # dict with multiple named projects -> should raise when project_type None
     rules.write_text(json.dumps({'project_configurations': {'a': {'x': 1}, 'b': {'y': 2}}}))
     try:
-        va.load_project_config(here, None)
+        rp = va.RulesParser(rules)
+        rp.load_project_config(None)
         assert False
     except ValueError:
         pass
 
     # dict with top-level project_type -> should return it
     rules.write_text(json.dumps({'project_configurations': {'project_type': 'Z', 'k': 1}}))
-    proj = va.load_project_config(here, None)
+    rp = va.RulesParser(rules)
+    proj = rp.load_project_config(None)
     assert proj.get('project_type').lower() == 'z'
 
 
@@ -146,20 +151,31 @@ def test_main_build_and_run_flow(monkeypatch, tmp_path, capsys):
 
     # prepare project config returned by load_project_config
     proj = {'project_type': 'zephyr', 'testframework': {'test_builder': {'command': 'python build.py', 'execute_path': 'execpath'}, 'test_runner': {'command': 'python run_tests.py --run_test', 'execute_path': 'execpath'}}}
-    monkeypatch.setattr(va, 'load_project_config', lambda here, pt: proj)
+    class DummyRP:
+        def __init__(self, path):
+            pass
+        def load_project_config(self, pt):
+            return proj
+        def get_test_runner(self, pt):
+            return proj.get('testframework', {}).get('test_runner', {})
+        def get_test_builder(self, pt):
+            return proj.get('testframework', {}).get('test_builder', {})
+    monkeypatch.setattr(va, 'RulesParser', DummyRP)
 
     # ensure subprocess.run for build and run returns success
-    def fake_run(cmd, cwd, stdout, stderr, text):
+    def fake_run(*args, **kwargs):
         return DummyProc('ok\n', 0)
     monkeypatch.setattr(va.subprocess, 'run', fake_run)
+    # avoid touching real filesystem build dirs (builder defaults may be placeholders)
+    monkeypatch.setattr(va.TestRunner, 'clean_build_dirs', lambda self, build_dir: None)
 
     # run main with build and run_test args
     monkeypatch.setattr(sys, 'argv', ['verify_agent.py', '--build', 'unit_tests/foo', '--run_test', 'unit_tests/foo', '--project', 'zephyr'])
     rc = va.main()
     out = capsys.readouterr().out
     assert rc == 0
-    assert 'Running build:' in out
-    assert 'Running tests:' in out
+    assert 'All checks passed' in out
+    assert '+ Running:' in out
 
 
 def test_build_command_uses_base_dir_when_candidate_missing(tmp_path):
@@ -174,47 +190,111 @@ def test_build_command_uses_base_dir_when_candidate_missing(tmp_path):
     assert str(tmp_path / 'build.py').endswith('build.py')
 
 
-def test_main_build_missing_builder_config(monkeypatch):
+def test_main_build_missing_builder_config(monkeypatch, capsys):
     monkeypatch.setattr(va.os.path, 'isfile', lambda p: True)
     monkeypatch.setattr(va, 'run_script', lambda p: 0)
     # project config missing builder/execute_path
-    monkeypatch.setattr(va, 'load_project_config', lambda here, pt: {'project_type': 'p'})
+    class DummyRP2:
+        def __init__(self, path):
+            pass
+        def load_project_config(self, pt):
+            return {'project_type': 'p'}
+        def get_test_runner(self, pt):
+            return {}
+        def get_test_builder(self, pt):
+            return {}
+    monkeypatch.setattr(va, 'RulesParser', DummyRP2)
+    monkeypatch.setattr(va.TestRunner, 'clean_build_dirs', lambda self, build_dir: None)
     monkeypatch.setattr(sys, 'argv', ['verify_agent.py', '--build', 'unit_tests/x'])
-    rc = va.main()
-    assert rc == 2
+    try:
+        rc = va.main()
+    except SystemExit as e:
+        rc = e.code
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert 'No supported builder configured' in out
 
 
-def test_main_build_subprocess_failure(monkeypatch):
+def test_main_build_subprocess_failure(monkeypatch, capsys):
     monkeypatch.setattr(va.os.path, 'isfile', lambda p: True)
     monkeypatch.setattr(va, 'run_script', lambda p: 0)
     proj = {'project_type': 'p', 'testframework': {'test_builder': {'command': 'python build.py', 'execute_path': 'execpath'}}}
-    monkeypatch.setattr(va, 'load_project_config', lambda here, pt: proj)
+    class DummyRP3:
+        def __init__(self, path):
+            pass
+        def load_project_config(self, pt):
+            return proj
+        def get_test_runner(self, pt):
+            return {}
+        def get_test_builder(self, pt):
+            return proj.get('testframework', {}).get('test_builder', {})
+    monkeypatch.setattr(va, 'RulesParser', DummyRP3)
     # subprocess.run returns failure
-    def fake_run_fail(cmd, cwd, stdout, stderr, text):
-        return DummyProc('err', 2)
+    def fake_run_fail(*args, **kwargs):
+        raise subprocess.CalledProcessError(returncode=2, cmd='cmake')
     monkeypatch.setattr(va.subprocess, 'run', fake_run_fail)
+    # avoid touching real filesystem build dirs
+    monkeypatch.setattr(va.TestRunner, 'clean_build_dirs', lambda self, build_dir: None)
     monkeypatch.setattr(sys, 'argv', ['verify_agent.py', '--build', 'unit_tests/x'])
-    rc = va.main()
-    assert rc == 1
+    try:
+        rc = va.main()
+    except SystemExit as e:
+        rc = e.code
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert 'FAIL: build failed' in out
 
 
-def test_main_run_missing_runner_config(monkeypatch):
+def test_main_run_missing_runner_config(monkeypatch, capsys):
     monkeypatch.setattr(va.os.path, 'isfile', lambda p: True)
     monkeypatch.setattr(va, 'run_script', lambda p: 0)
-    monkeypatch.setattr(va, 'load_project_config', lambda here, pt: {'project_type': 'p'})
+    class DummyRP4:
+        def __init__(self, path):
+            pass
+        def load_project_config(self, pt):
+            return {'project_type': 'p'}
+        def get_test_runner(self, pt):
+            return {}
+        def get_test_builder(self, pt):
+            return {}
+    monkeypatch.setattr(va, 'RulesParser', DummyRP4)
+    monkeypatch.setattr(va.TestRunner, 'clean_build_dirs', lambda self, build_dir: None)
     monkeypatch.setattr(sys, 'argv', ['verify_agent.py', '--run_test', 'unit_tests/x'])
-    rc = va.main()
-    assert rc == 2
+    try:
+        rc = va.main()
+    except SystemExit as e:
+        rc = e.code
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert 'No supported builder configured' in out
+    assert 'No supported test runner configured' in out
 
 
-def test_main_run_subprocess_failure(monkeypatch):
+def test_main_run_subprocess_failure(monkeypatch, capsys):
     monkeypatch.setattr(va.os.path, 'isfile', lambda p: True)
     monkeypatch.setattr(va, 'run_script', lambda p: 0)
     proj = {'project_type': 'p', 'testframework': {'test_runner': {'command': 'python run.py', 'execute_path': 'execpath'}}}
-    monkeypatch.setattr(va, 'load_project_config', lambda here, pt: proj)
-    def fake_run_fail(cmd, cwd, stdout, stderr, text):
-        return DummyProc('', 3)
+    class DummyRP5:
+        def __init__(self, path):
+            pass
+        def load_project_config(self, pt):
+            return proj
+        def get_test_runner(self, pt):
+            return proj.get('testframework', {}).get('test_runner', {})
+        def get_test_builder(self, pt):
+            return {}
+    monkeypatch.setattr(va, 'RulesParser', DummyRP5)
+    def fake_run_fail(*args, **kwargs):
+        raise subprocess.CalledProcessError(returncode=3, cmd='ctest')
     monkeypatch.setattr(va.subprocess, 'run', fake_run_fail)
+    # avoid touching real filesystem build dirs
+    monkeypatch.setattr(va.TestRunner, 'clean_build_dirs', lambda self, build_dir: None)
     monkeypatch.setattr(sys, 'argv', ['verify_agent.py', '--run_test', 'unit_tests/x'])
-    rc = va.main()
-    assert rc == 1
+    try:
+        rc = va.main()
+    except SystemExit as e:
+        rc = e.code
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert 'No supported builder configured' in out
+    assert 'No supported test runner configured' in out

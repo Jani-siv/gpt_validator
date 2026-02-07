@@ -78,7 +78,7 @@
         "test_runner": {
           "name": "test_runner",
           "info": "Runs dti_tools unit tests",
-          "command": "build_and_run_tests.py --run_tests",
+          "command": "",
           "execute_path": "tools/dti_tools/",
           "build_path": "tools/dti_tools/build/"
         },
@@ -86,7 +86,7 @@
           "name": "test_builder",
           "info": "Builds dti_tools unit tests",
           "gcc_builder": true,
-          "command": "build_and_run_tests.py --build",
+          "command": "",
           "compiler_flags": ["-DUNIT_TESTS=ON"],
           "execute_path": "tools/dti_tools/",
           "build_path": "tools/dti_tools/build/"

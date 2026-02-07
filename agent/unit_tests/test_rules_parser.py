@@ -51,3 +51,47 @@ def test_get_returns_none_when_missing(tmp_path):
     # entry exists but no testframework
     assert rp.get_test_runner("other") is None
     assert rp.get_test_builder("other") is None
+
+
+def test_load_project_config_missing_file(tmp_path):
+    # no .agent_rules.json present
+    with pytest.raises(FileNotFoundError):
+        RulesParser(str(tmp_path))
+
+
+def test_load_project_config_single_and_select(tmp_path):
+    data = {
+        "project_configurations": {
+            "myproj": {"project_type": "myproj", "testframework": {"test_runner": {"command": "run"}}}
+        }
+    }
+    f = tmp_path / ".agent_rules.json"
+    f.write_text(json.dumps(data))
+
+    # single entry, project_type None should return the only entry
+    rp = RulesParser(f)
+    cfg = rp.load_project_config(None)
+    assert cfg.get('project_type') == 'myproj'
+
+    # selecting by name should also work (case-insensitive)
+    cfg2 = rp.load_project_config('MYPROJ')
+    assert cfg2.get('project_type') == 'myproj'
+
+
+def test_load_project_config_multiple_requires_selection(tmp_path):
+    data = {
+        "project_configurations": [
+            {"project_type": "one"},
+            {"project_type": "two"}
+        ]
+    }
+    f = tmp_path / ".agent_rules.json"
+    f.write_text(json.dumps(data))
+
+    rp = RulesParser(f)
+    with pytest.raises(ValueError):
+        rp.load_project_config(None)
+
+    # unknown project raises ValueError listing available
+    with pytest.raises(ValueError):
+        rp.load_project_config('missing')

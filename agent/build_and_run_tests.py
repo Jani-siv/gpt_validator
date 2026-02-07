@@ -20,12 +20,18 @@ from agent.rules_parser import RulesParser
 
 def git_repo_root(cwd: Path | str | None = None) -> Path | None:
     try:
-        out = subprocess.check_output(
+        # Use subprocess.run so test monkeypatches that replace subprocess.run
+        # (and which may not accept a `timeout` kwarg) are compatible.
+        proc = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
             cwd=cwd,
-            text=True,
+            stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-        ).strip()
+            text=True,
+        )
+        if proc.returncode != 0:
+            return None
+        out = proc.stdout.strip()
         return Path(out).resolve()
     except subprocess.CalledProcessError:
         return None
@@ -33,20 +39,21 @@ def git_repo_root(cwd: Path | str | None = None) -> Path | None:
 class TestRunner:
     def __init__(self, use_host_compiler: bool = True):
         self.script_dir = Path(__file__).parent
-        self.repo_root = git_repo_root(self.script_dir)
+        self.repo_root = git_repo_root(self.script_dir) or Path.cwd()
         self.use_gcc_builder = False
-        self.builder = { "command": "", "execute_path": Path, "build_path": Path , "compiler_flags": [] }
+        self.builder = { "command": "", "execute_path": Path, "build_path": Path , "gcc_builder": True, "compiler_flags": [] }
         self.runner = { "command": "", "execute_path": Path, "build_path": Path }
         self.env = build_env(use_host_compiler)
         self.cores = self.get_cores(8)
         self._failed = False
 
-    def make_framework_entry(self, is_builder: bool, command: str, execute_path: str, build_path: str, compiler_flags: list[str] | None = None) -> dict:
+    def make_framework_entry(self, is_builder: bool, command: str, execute_path: str, build_path: str, compiler_flags: list[str] | None = None, use_gcc_builder: bool = True) -> dict:
         # Validate inputs
         if not isinstance(is_builder, bool):
             raise TypeError("is_builder must be a boolean")
-        if not command:
-            self.use_gcc_builder = True
+        # use_gcc_builder is controlled by the `use_gcc_builder` argument
+        # (do not infer it from an empty command)
+
         if not execute_path:
             raise ValueError("execute_path must be provided and non-empty")
         # If build_path is not provided, fall back to execute_path only for runner
@@ -61,30 +68,47 @@ class TestRunner:
                 "command": command,
                 "execute_path": self.repo_root / execute_path,
                 "build_path": self.repo_root / build_path,
+                "gcc_builder": use_gcc_builder,
                 "compiler_flags": compiler_flags or []}
+            # reflect configured builder choice on the instance attribute
+            self.use_gcc_builder = bool(self.builder.get("gcc_builder"))
         else:
             self.runner = {
                 "command": command,
                 "execute_path": self.repo_root / execute_path,
                 "build_path": self.repo_root / build_path}
     
+    
     def clean_build_dirs(self, build_dir: Path):
         if build_dir.exists():
             shutil.rmtree(build_dir)
         build_dir.mkdir(parents=True, exist_ok=True)
 
+
     def gcc_builder(self, compiling_flags: list[str]):
         try:
-            self.run(["cmake", "-DCMAKE_CXX_COMPILER=g++", compiling_flags, str(self.builder["build_path"])], cwd=self.builder["execute_path"])
+            # Ensure compiling_flags is a flat list of strings
+            flags = []
+            if isinstance(compiling_flags, (list, tuple)):
+                for f in compiling_flags:
+                    flags.append(str(f))
+            elif compiling_flags:
+                flags = [str(compiling_flags)]
+
+            cmake_cmd = ["cmake", "-DCMAKE_CXX_COMPILER=g++"] + flags + [str(self.builder["build_path"])]
+            self.run(cmake_cmd, cwd=self.builder["execute_path"])
             self.run(["make", f"-j{self.cores}"], cwd=self.builder["build_path"])
             print("OK: build success")
         except subprocess.CalledProcessError as e:
             print(f"FAIL: build failed ({e})")
 
+
     def make_build(self):
         self.clean_build_dirs(self.builder["build_path"])
         if self.use_gcc_builder:
             self.gcc_builder([])
+        else:
+            print("No supported builder configured, cannot build tests")
 
     def make_testrun(self):
         self.make_build()
@@ -105,6 +129,9 @@ class TestRunner:
                 self._failed = True
             else:
                 print("OK: tests success")
+        else:
+            print("No supported test runner configured, cannot run tests")       
+
 
     def has_failed(self) -> bool:
         return bool(self._failed)
@@ -114,12 +141,14 @@ class TestRunner:
         result = self.run(["ctest", "--output-on-failure"], cwd=self.runner["execute_path"], capture_output=True)
         return result.returncode, result.stdout
     
+
     def run(self, cmd, cwd=None, capture_output=False):
         print(f"+ Running: {' '.join(cmd)} (cwd={cwd})")
         if capture_output:
             return subprocess.run(cmd, cwd=cwd, env=self.env, text=True, capture_output=True)
         subprocess.run(cmd, cwd=cwd, check=True, env=self.env)
         return None
+
 
     def parse_ctest_failures(self, output: str):
         failures = []
@@ -139,6 +168,7 @@ class TestRunner:
                         failures.append(parts[1].strip().split(" ")[0])
         return failures
     
+
     def get_cores(self, max_allowed: int | None) -> int:
         """Return number of CPU cores limited by max_allowed.
 
@@ -196,63 +226,3 @@ def build_env(use_host_compiler: bool):
         }
     )
     return env
-
-def main():
-    p = argparse.ArgumentParser(description="Build and run tests using .agent_rules.json rules")
-    p.add_argument("--project-type", default="dti_tools", help="project_type to use from .agent_rules.json")
-    p.add_argument("--rules", default=None, help="path to .agent_rules.json (defaults to script dir)")
-    p.add_argument("--build", action="store_true", help="only perform the build step")
-    p.add_argument("--build-only", dest="build", action="store_true", help="alias for --build")
-    p.add_argument("--run_tests", action="store_true", help="only run tests (ctest)")
-    p.add_argument("--use_sdk", action="store_false", dest="sdk_compiler", help="use SDK toolchain instead of host compiler (default: use host compiler)")
-    args = p.parse_args()
-    script_dir = Path(__file__).parent
-    rules_path = Path(args.rules) if args.rules else script_dir / ".agent_rules.json"
-    if not rules_path.exists():
-        print(f"ERROR: rules file not found: {rules_path}")
-        sys.exit(2)
-    # action selection running tests will build also tests, maybe optimize in the future
-    do_build = args.build or args.run_tests or (not args.build and not args.run_tests)
-    do_test = args.run_tests or (not args.build and not args.run_tests)
-    # Compiler selection possible production build in the future?
-    host_compiler = not args.sdk_compiler
-    # Create test runner
-    testRunner = TestRunner(host_compiler)
-    # Get rule set
-    rules_Parser = RulesParser(rules_path)
-    runner_cfg = rules_Parser.get_test_runner(args.project_type)
-    builder_cfg = rules_Parser.get_test_builder(args.project_type) or {}
-    # If no configuration found fail with error
-    if not runner_cfg or not builder_cfg:
-        print(f"ERROR: project_type '{args.project_type}' not found in {rules_path}")
-        sys.exit(2)
-
-    testRunner.make_framework_entry(
-        False,
-        runner_cfg.get("command", ""),
-        runner_cfg.get("execute_path", ""),
-        runner_cfg.get("build_path", runner_cfg.get("execute_path", "")),
-    )
-    
-    testRunner.make_framework_entry(
-        True,
-        builder_cfg.get("command", ""),
-        builder_cfg.get("execute_path", ""),
-        builder_cfg.get("build_path", builder_cfg.get("execute_path", "")),
-        builder_cfg.get("compiler_flags", []),
-    )
-
-    # Setup compiler
-    testRunner.use_gcc_builder = builder_cfg.get("gcc_builder", False)
-
-    if do_build:
-        testRunner.make_build()
-
-    if do_test:
-        testRunner.make_testrun()
-    # if tests failed, exit non-zero at top-level only
-    if testRunner.has_failed():
-        sys.exit(1)
-
-if __name__ == "__main__":
-    main()
