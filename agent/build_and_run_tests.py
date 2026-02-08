@@ -46,6 +46,7 @@ class TestRunner:
         self.env = build_env(use_host_compiler)
         self.cores = self.get_cores(8)
         self._failed = False
+        self.custom_cmd_output = ""
 
     def make_framework_entry(self, is_builder: bool, command: str, execute_path: str, build_path: str, compiler_flags: list[str] | None = None, use_gcc_builder: bool = True) -> dict:
         # Validate inputs
@@ -78,6 +79,8 @@ class TestRunner:
                 "execute_path": self.repo_root / execute_path,
                 "build_path": self.repo_root / build_path}
     
+    def get_custom_cmd_output(self) -> str:
+        return self.custom_cmd_output
     
     def clean_build_dirs(self, build_dir: Path):
         if build_dir.exists():
@@ -114,7 +117,8 @@ class TestRunner:
             # call gcc_builder which uses configured flags from self.builder
             self.gcc_builder()
         else:
-            print("No supported builder configured, cannot build tests")
+            print("Running custom command for build: " + self.builder["command"])
+            self.custom_cmd_output = self.run(self.builder["command"].split(), cwd=self.builder["execute_path"], capture_output=True)
 
 
     def make_testrun(self):
@@ -137,7 +141,8 @@ class TestRunner:
             else:
                 print("OK: tests success")
         else:
-            print("No supported test runner configured, cannot run tests")
+            print("Running custom command to run tests: " + self.runner["command"])
+            self.custom_cmd_output = self.run(self.runner["command"].split(), cwd=self.runner["execute_path"], capture_output=True)
 
 
     def has_failed(self) -> bool:
