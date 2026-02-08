@@ -143,24 +143,12 @@ def get_test_runner_instance(rules: dict) -> TestRunner:
     return tr
 
 def main():
-    repo_root = Path(__file__).resolve().parent.parent
-    temp_rules_path = repo_root / "integration_tests" / ".agent_rules_temp.json"
-
-    # Minimal sunny-day rules for a gcc_tester project
-    rules = get_gcc_tester_rules()
-
-    try:
-        temp_rules_path.write_text(json.dumps(rules, indent=2))
-    except Exception:
-        print("Warning: unable to write temporary rules file, continuing")
-
-    tr = get_test_runner_instance(rules)
 
     # Define scenarios
     class BuildScenario:
         name = "build"
 
-        def __init__(self, tr: TestRunner):
+        def __init__(self):
             self.rules = get_gcc_tester_rules()
             self.tr = get_test_runner_instance(self.rules)
 
@@ -171,43 +159,50 @@ def main():
                     self.tr.make_build()
                 except Exception:
                     traceback.print_exc()
-                    # try to mark failure if available
-                    try:
-                        self.tr._failed = True
-                    except Exception:
-                        pass
-            else:
-                print("No builder available on TestRunner")
+            if hasattr(self.tr, "_failed"):
+                if self.tr._failed == False:
+                    print("TestRunner reports success as expected")
+                    return False
+                else:
+                    print("TestRunner did not report success when expected")
+                    return True
+            return True  # if we can't determine failure, return True to indicate failure by default
+
 
     class TestScenario:
         name = "test"
 
-        def __init__(self, tr: TestRunner):
+        def __init__(self):
             self.rules = get_gcc_tester_rules()
             self.tr = get_test_runner_instance(self.rules)
 
-        def run(self):
+        def run(self) -> bool:
             # Prefer TestRunner.make_testrun it handle build and ctest automatically
-                try:
-                    if hasattr(self.tr, "make_testrun"):
-                        self.tr.make_testrun()
-                except Exception:
-                    traceback.print_exc()
-                    # try to mark failure if available
-                    try:
-                        self.tr._failed = False
-                    except Exception:
-                        pass
+            try:
+                if hasattr(self.tr, "make_testrun"):
+                    self.tr.make_testrun()
+            except Exception:
+                traceback.print_exc()
+
+            if hasattr(self.tr, "_failed"):
+                if self.tr._failed == False:
+                    print("TestRunner reports success as expected")
+                    return False
+                else:
+                    print("TestRunner did not report success when expected")
+                    return True
+            return True  # if we can't determine failure, return True to indicate failure by default
+
 
 
     class FailBuildScenario:
         name = "fail-build"
 
-        def __init__(self, tr: TestRunner):
+        def __init__(self):
             self.rules = get_gcc_tester_fail_build_rules()
             self.tr = get_test_runner_instance(self.rules)
 
-        def run(self):
+        def run(self) -> bool:
             # Prefer TestRunner.make_build if present
             if hasattr(self.tr, "make_build"):
                 try:
@@ -215,40 +210,45 @@ def main():
                 except Exception:
                     traceback.print_exc()
                     # try to mark failure if available
-                    try:
-                        self.tr._failed = True
-                    except Exception:
-                        pass
-            else:
-                print("No builder available on TestRunner")
+            if hasattr(self.tr, "_failed"):
+                if self.tr._failed == True:
+                    print("TestRunner reports failure as expected")
+                    return False
+                else:
+                    print("TestRunner did not report failure when expected")
+                    return True
+            return True  # if we can't determine failure, return True to indicate failure by default
+
 
 
     class FailTestScenario:
         name = "fail-test"
 
-        def __init__(self, tr: TestRunner):
+        def __init__(self):
             self.rules = get_gcc_tester_test_failure_rules()
             self.tr = get_test_runner_instance(self.rules)
 
-        def run(self):
+        def run(self) -> bool:
             # Prefer TestRunner.make_testrun it handle build and ctest automatically
-                try:
-                    if hasattr(self.tr, "make_testrun"):
-                        self.tr.make_testrun()
-                except Exception:
-                    traceback.print_exc()
-                    # try to mark failure if available
-                    try:
-                        self.tr._failed = True
-                    except Exception:
-                        pass
-            
+            try:
+                if hasattr(self.tr, "make_testrun"):
+                    self.tr.make_testrun()
+            except Exception:
+                traceback.print_exc()
+            if hasattr(self.tr, "_failed"):
+                if self.tr._failed == True:
+                    print("TestRunner reports failure as expected")
+                    return False
+                else:
+                    print("TestRunner did not report failure when expected")
+                    return True
+            return True  # if we can't determine failure, return True to indicate failure by default
 
     scenarios = {
-        "build": BuildScenario(tr),
-        "test": TestScenario(tr),
-        "fail-build": FailBuildScenario(tr),
-        "fail-test": FailTestScenario(tr),
+        "build": BuildScenario(),
+        "test": TestScenario(),
+        "fail-build": FailBuildScenario(),
+        "fail-test": FailTestScenario(),
     }
 
     import argparse
@@ -257,6 +257,7 @@ def main():
     args = parser.parse_args()
 
     to_run = []
+    failed = True
     if args.scenario == "all":
         to_run = list(scenarios.values())
     else:
@@ -264,26 +265,13 @@ def main():
 
     for s in to_run:
         print(f"Running scenario: {s.name}")
-        s.run()
-
-    # report result and clean up
-    failed = False
-    try:
-        failed = bool(tr.has_failed())
-    except Exception:
-        failed = bool(getattr(tr, "_failed", False))
-
-    try:
-        if temp_rules_path.exists():
-            temp_rules_path.unlink()
-    except Exception:
-        pass
+        failed = s.run()
 
     if failed:
-        print("Build failed: TestRunner reports failure")
+        print("Integration tests FAILED: TestRunner reports failure")
         sys.exit(2)
     else:
-        print("Build succeeded: TestRunner reports success")
+        print("Integration tests PASSED: TestRunner reports success")
 
 if __name__ == "__main__":
     main()
