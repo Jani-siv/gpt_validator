@@ -15,70 +15,188 @@ import shutil
 import subprocess
 from pathlib import Path
 import sys
+from agent.rules_parser import RulesParser
 
 
-def find_repo_root(start: Path) -> Path:
-    p = start.resolve()
-    last = None
-    for parent in [p] + list(p.parents):
-        if (parent / "CMakeLists.txt").exists():
-            last = parent
-    if last:
-        return last
-    return Path.cwd().resolve()
+def git_repo_root(cwd: Path | str | None = None) -> Path | None:
+    try:
+        # Use subprocess.run so test monkeypatches that replace subprocess.run
+        # (and which may not accept a `timeout` kwarg) are compatible.
+        proc = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        if proc.returncode != 0:
+            return None
+        out = proc.stdout.strip()
+        return Path(out).resolve()
+    except subprocess.CalledProcessError:
+        return None
+
+class TestRunner:
+    def __init__(self, use_host_compiler: bool = True):
+        self.script_dir = Path(__file__).parent
+        self.repo_root = git_repo_root(self.script_dir) or Path.cwd()
+        self.use_gcc_builder = False
+        self.builder = { "command": "", "execute_path": Path, "build_path": Path , "gcc_builder": True, "compiler_flags": [] }
+        self.runner = { "command": "", "execute_path": Path, "build_path": Path }
+        self.env = build_env(use_host_compiler)
+        self.cores = self.get_cores(8)
+        self._failed = False
+        self.custom_cmd_output = ""
+
+    def make_framework_entry(self, is_builder: bool, command: str, execute_path: str, build_path: str, compiler_flags: list[str] | None = None, use_gcc_builder: bool = True) -> dict:
+        # Validate inputs
+        if not isinstance(is_builder, bool):
+            raise TypeError("is_builder must be a boolean")
+        # use_gcc_builder is controlled by the `use_gcc_builder` argument
+        # (do not infer it from an empty command)
+
+        if not execute_path:
+            raise ValueError("execute_path must be provided and non-empty")
+        # If build_path is not provided, fall back to execute_path only for runner
+        if not build_path:
+            if not is_builder:
+                build_path = execute_path
+            else:
+                raise ValueError("build_path must be provided and non-empty")
+
+        if is_builder:
+            self.builder = {
+                "command": command,
+                "execute_path": self.repo_root / execute_path,
+                "build_path": self.repo_root / build_path,
+                "gcc_builder": use_gcc_builder,
+                "compiler_flags": compiler_flags or []}
+            # reflect configured builder choice on the instance attribute
+            self.use_gcc_builder = bool(self.builder.get("gcc_builder"))
+        else:
+            self.runner = {
+                "command": command,
+                "execute_path": self.repo_root / execute_path,
+                "build_path": self.repo_root / build_path}
+    
+    def get_custom_cmd_output(self) -> str:
+        return self.custom_cmd_output
+    
+    def clean_build_dirs(self, build_dir: Path):
+        if build_dir.exists():
+            shutil.rmtree(build_dir)
+        build_dir.mkdir(parents=True, exist_ok=True)
 
 
-def load_rules(rules_path: Path):
-    with rules_path.open() as f:
-        return json.load(f)
+    def gcc_builder(self):
+        try:
+            # Use only the configured compiler flags from self.builder
+            cfg_flags = self.builder.get("compiler_flags", [])
+            if isinstance(cfg_flags, (list, tuple)):
+                flags = [str(f) for f in cfg_flags]
+            elif cfg_flags:
+                flags = [str(cfg_flags)]
+            else:
+                flags = []
+
+            src = str(self.builder["execute_path"])
+            build = str(self.builder["build_path"])
+            cmake_cmd = ["cmake", "-S", src, "-B", build, "-DCMAKE_CXX_COMPILER=g++"] + flags
+            self.run(cmake_cmd, cwd=self.builder["execute_path"])
+            self.run(["make", f"-j{self.cores}"], cwd=self.builder["build_path"])
+            print("OK: build success")
+        except subprocess.CalledProcessError as e:
+            print(f"FAIL: build failed ({e})")
+            # Mark the TestRunner as failed so higher-level callers can react.
+            self._failed = True
 
 
-def get_execute_path(rules, project_type: str):
-    for pc in rules.get("project_configurations", []):
-        if pc.get("project_type") == project_type:
-            tb = pc.get("testframework", {}).get("test_builder", {})
-            return tb.get("execute_path"), tb.get("command")
-    return None, None
+    def make_build(self):
+        self.clean_build_dirs(self.builder["build_path"])
+        if self.use_gcc_builder:
+            # call gcc_builder which uses configured flags from self.builder
+            self.gcc_builder()
+        else:
+            print("Running custom command for build: " + self.builder["command"])
+            self.custom_cmd_output = self.run(self.builder["command"].split(), cwd=self.builder["execute_path"], capture_output=True)
 
 
-def run(cmd, cwd=None, env=None, capture_output=False):
-    print(f"+ Running: {' '.join(cmd)} (cwd={cwd})")
-    if capture_output:
-        return subprocess.run(cmd, cwd=cwd, env=env, text=True, capture_output=True)
-    subprocess.run(cmd, cwd=cwd, check=True, env=env)
-    return None
+    def make_testrun(self):
+        self.make_build()
+        if self.use_gcc_builder:
+            ret_code, result = self.run_ctest_tests()
+            if ret_code != 0:
+                failures = self.parse_ctest_failures(result)
+                log_path = (self.runner["build_path"] / "Testing" / "Temporary" / "LastTest.log").resolve()
+                if failures:
+                    print("FAIL: tests failed")
+                    print("Failed tests:")
+                    for name in failures:
+                        print(f"- {name}")
+                else:
+                    print("FAIL: tests failed (unable to list failing tests from ctest output)")
+                print(f"Logs: {log_path}")
+                # mark failure for higher-level caller to act on
+                self._failed = True
+            else:
+                print("OK: tests success")
+        else:
+            print("Running custom command to run tests: " + self.runner["command"])
+            self.custom_cmd_output = self.run(self.runner["command"].split(), cwd=self.runner["execute_path"], capture_output=True)
 
 
-def parse_ctest_failures(output: str):
-    failures = []
-    capture = False
-    for line in output.splitlines():
-        if line.startswith("The following tests FAILED:"):
-            capture = True
-            continue
-        if capture:
-            stripped = line.strip()
-            if not stripped:
-                break
-            # Expected format: "<index> - <name> (<time>)"
-            if "-" in stripped:
-                parts = stripped.split("-", 1)
-                if len(parts) == 2:
-                    failures.append(parts[1].strip().split(" ")[0])
-    return failures
+    def has_failed(self) -> bool:
+        return bool(self._failed)
+            
+
+    def run_ctest_tests(self):
+        result = self.run(["ctest", "--output-on-failure"], cwd=self.runner["execute_path"], capture_output=True)
+        return result.returncode, result.stdout
+    
+
+    def run(self, cmd, cwd=None, capture_output=False):
+        print(f"+ Running: {' '.join(cmd)} (cwd={cwd})")
+        if capture_output:
+            return subprocess.run(cmd, cwd=cwd, env=self.env, text=True, capture_output=True)
+        subprocess.run(cmd, cwd=cwd, check=True, env=self.env)
+        return None
 
 
-def clean_build_dirs(project_dir: Path):
-    build_dir = project_dir / "build"
-    if build_dir.exists():
-        shutil.rmtree(build_dir)
-    build_dir.mkdir(parents=True, exist_ok=True)
+    def parse_ctest_failures(self, output: str):
+        failures = []
+        capture = False
+        for line in output.splitlines():
+            if line.startswith("The following tests FAILED:"):
+                capture = True
+                continue
+            if capture:
+                stripped = line.strip()
+                if not stripped:
+                    break
+                # Expected format: "<index> - <name> (<time>)"
+                if "-" in stripped:
+                    parts = stripped.split("-", 1)
+                    if len(parts) == 2:
+                        failures.append(parts[1].strip().split(" ")[0])
+        return failures
+    
 
-    unit_dir = build_dir / "unitTest"
-    integration_dir = build_dir / "integration"
-    unit_dir.mkdir()
-    integration_dir.mkdir()
-    return unit_dir, integration_dir
+    def get_cores(self, max_allowed: int | None) -> int:
+        """Return number of CPU cores limited by max_allowed.
+
+        If max_allowed is None or not a positive int, return detected cores.
+        Otherwise return min(detected_cores, max_allowed).
+        """
+        detected = multiprocessing.cpu_count()
+        if max_allowed is None:
+            return detected
+        try:
+            allowed = int(max_allowed)
+        except Exception:
+            return detected
+        if allowed <= 0:
+            return detected
+        return allowed if allowed < detected else detected
 
 
 def build_env(use_host_compiler: bool):
@@ -120,105 +238,3 @@ def build_env(use_host_compiler: bool):
         }
     )
     return env
-
-
-def main():
-    p = argparse.ArgumentParser(description="Build and run tests using .agent_rules.json rules")
-    p.add_argument("--project-type", default="dti_tools", help="project_type to use from .agent_rules.json")
-    p.add_argument("--rules", default=None, help="path to .agent_rules.json (defaults to script dir)")
-    p.add_argument("--build", action="store_true", help="only perform the build step")
-    p.add_argument("--run_tests", action="store_true", help="only run tests (ctest)")
-    compiler_group = p.add_mutually_exclusive_group()
-    compiler_group.add_argument(
-        "--host-compiler",
-        action="store_true",
-        help="force host compiler/toolchain and ignore SDK env (default)",
-    )
-    compiler_group.add_argument(
-        "--sdk-compiler",
-        action="store_true",
-        help="use the current environment toolchain (SDK/Yocto)",
-    )
-    args = p.parse_args()
-
-    script_dir = Path(__file__).parent
-    rules_path = Path(args.rules) if args.rules else script_dir / ".agent_rules.json"
-    if not rules_path.exists():
-        print(f"ERROR: rules file not found: {rules_path}")
-        sys.exit(2)
-
-    rules = load_rules(rules_path)
-    execute_path, builder_cmd = get_execute_path(rules, args.project_type)
-    if not execute_path:
-        print(f"ERROR: project_type '{args.project_type}' not found in {rules_path}")
-        sys.exit(2)
-
-    repo_root = find_repo_root(script_dir)
-    execute_path_value = Path(execute_path)
-    if execute_path_value.is_absolute():
-        project_dir = execute_path_value.resolve()
-    else:
-        project_dir = (repo_root / execute_path_value).resolve()
-    if not project_dir.exists():
-        print(f"ERROR: computed project_dir does not exist: {project_dir}")
-        sys.exit(2)
-
-    print(f"Repo root: {repo_root}")
-    print(f"Project dir: {project_dir}")
-
-    cores = multiprocessing.cpu_count()
-
-    do_build = args.build or args.run_tests or (not args.build and not args.run_tests)
-    do_test = args.run_tests or (not args.build and not args.run_tests)
-    use_host_compiler = not args.sdk_compiler
-    env = build_env(use_host_compiler)
-    if env is not None:
-        print("Info: using host compiler environment for this run only.")
-
-    unit_dir = None
-    if do_build:
-        unit_dir, _ = clean_build_dirs(project_dir)
-        # Some CMake scripts try to install Python deps like cxxheaderparser
-        # Attempt to ensure it's available to avoid permission errors during CMake.
-        try:
-            import cxxheaderparser  # type: ignore
-        except Exception:
-            print("Info: Python package 'cxxheaderparser' not found. Attempting to install with --user...")
-            try:
-                run([sys.executable, "-m", "pip", "install", "--user", "cxxheaderparser"], env=env)
-            except subprocess.CalledProcessError:
-                print("Warning: automatic install of 'cxxheaderparser' failed. CMake may attempt to install it and require elevated permissions.")
-        try:
-            run(["cmake", "-DCMAKE_CXX_COMPILER=g++", "-DUNIT_TEST=ON", str(project_dir)], cwd=unit_dir, env=env)
-            run(["make", f"-j{cores}"], cwd=unit_dir, env=env)
-            print("OK: build success")
-        except subprocess.CalledProcessError as e:
-            print(f"FAIL: build failed ({e})")
-            sys.exit(1)
-
-    if do_test:
-        if unit_dir is None:
-            unit_dir = (project_dir / "build" / "unitTest").resolve()
-        result = run(["ctest", "--output-on-failure"], cwd=unit_dir, env=env, capture_output=True)
-        if result is None:
-            print("FAIL: tests did not run")
-            sys.exit(1)
-        if result.returncode == 0:
-            print("OK: tests success")
-            return
-
-        failures = parse_ctest_failures(result.stdout)
-        log_path = (unit_dir / "Testing" / "Temporary" / "LastTest.log").resolve()
-        if failures:
-            print("FAIL: tests failed")
-            print("Failed tests:")
-            for name in failures:
-                print(f"- {name}")
-        else:
-            print("FAIL: tests failed (unable to list failing tests from ctest output)")
-        print(f"Logs: {log_path}")
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()

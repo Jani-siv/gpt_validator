@@ -19,6 +19,8 @@ import os
 import shlex
 import subprocess
 import sys
+from agent.rules_parser import RulesParser
+from agent.build_and_run_tests import TestRunner
 
 
 def run_script(path: str) -> int:
@@ -29,48 +31,7 @@ def run_script(path: str) -> int:
 	return proc.returncode
 
 
-def load_project_config(here: str, project_type: str | None) -> dict:
-	rules_path = os.path.join(here, '.agent_rules.json')
-	if not os.path.isfile(rules_path):
-		raise FileNotFoundError(f"Missing rules file: {rules_path}")
-
-	with open(rules_path, 'r', encoding='utf-8') as handle:
-		rules = json.load(handle)
-
-	projects = rules.get('project_configurations', [])
-	if not projects:
-		raise ValueError('No project_configurations found in .agent_rules.json')
-
-	if isinstance(projects, dict):
-		if 'project_type' in projects:
-			project_entries = [projects]
-		else:
-			project_entries = []
-			for key, value in projects.items():
-				if isinstance(value, dict):
-					entry = dict(value)
-					entry.setdefault('project_type', key)
-					project_entries.append(entry)
-	elif isinstance(projects, list):
-		project_entries = [p for p in projects if isinstance(p, dict)]
-	else:
-		project_entries = []
-	if not project_entries:
-		raise ValueError('project_configurations must contain objects with project_type')
-
-	if project_type is None:
-		if len(project_entries) == 1:
-			return project_entries[0]
-		raise ValueError('Multiple project_configurations found; use --project to select one')
-
-	project_key = project_type.lower()
-	for project in project_entries:
-		candidate = str(project.get('project_type', '')).lower()
-		if candidate == project_key:
-			return project
-
-	available = ', '.join(sorted({str(p.get('project_type', '')).lower() for p in project_entries if p.get('project_type')}))
-	raise ValueError(f"Unknown project type '{project_type}'. Available: {available}")
+# project config loading is handled by RulesParser
 
 
 def build_command(command: str, extra_args: list[str], base_dir: str, cwd: str) -> list[str]:
@@ -145,6 +106,117 @@ def normalize_zephyr_command(command: str, mode: str, project_type: str) -> str:
 	return ' '.join(shlex.quote(part) for part in updated)
 
 
+def perform_build(here: str, build_path: str | None, project_config: dict) -> int:
+	project_type = str(project_config.get('project_type', '')).lower() if project_config else ''
+	testframework = read_test_framework(project_config)
+	builder = {}
+	if isinstance(testframework, dict):
+		normalized_framework = normalize_keys(testframework)
+		builder = normalized_framework.get('test_builder') or normalized_framework.get('testbuilder') or normalized_framework.get('builder') or {}
+	if not isinstance(builder, dict):
+		builder = {}
+	command, execute_path = extract_command_and_path(builder, 'test_builder')
+	if not command or not execute_path:
+		fallback_command, fallback_path = extract_command_and_path(testframework, 'test_builder')
+		command = command or fallback_command
+		execute_path = execute_path or fallback_path
+	if not command or not execute_path:
+		normalized_project = normalize_keys(project_config)
+		top_level = normalized_project.get('test_builder') if isinstance(normalized_project.get('test_builder'), dict) else {}
+		fallback_command, fallback_path = extract_command_and_path(top_level, 'test_builder')
+		command = command or fallback_command
+		execute_path = execute_path or fallback_path
+	if not command or not execute_path:
+		print("Error: test_builder configuration missing command or execute_path", file=sys.stderr)
+		return 2
+
+	repo_root = os.path.abspath(os.path.join(here, '..', '..', '..'))
+	cwd = execute_path if os.path.isabs(execute_path) else os.path.join(repo_root, execute_path)
+	command = normalize_zephyr_command(command, 'build', project_type)
+	extra_args = [build_path] if build_path else []
+	cmd = build_command(command, extra_args, here, cwd)
+	print(f"Running build: cd {cwd} && {' '.join(cmd)}")
+	proc = subprocess.run(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+	if proc.stdout:
+		print(proc.stdout, end='')
+	if proc.returncode != 0:
+		return 1
+	print("OK: Build succeeded.")
+	return 0
+
+
+def perform_run_test(here: str, test_path: str | None, project_config: dict) -> int:
+	project_type = str(project_config.get('project_type', '')).lower() if project_config else ''
+	testframework = read_test_framework(project_config)
+	runner = {}
+	if isinstance(testframework, dict):
+		normalized_framework = normalize_keys(testframework)
+		runner = normalized_framework.get('test_runner') or normalized_framework.get('testrunner') or normalized_framework.get('runner') or {}
+	if not isinstance(runner, dict):
+		runner = {}
+	command, execute_path = extract_command_and_path(runner, 'test_runner')
+	if not command or not execute_path:
+		fallback_command, fallback_path = extract_command_and_path(testframework, 'test_runner')
+		command = command or fallback_command
+		execute_path = execute_path or fallback_path
+	if not command or not execute_path:
+		normalized_project = normalize_keys(project_config)
+		top_level = normalized_project.get('test_runner') if isinstance(normalized_project.get('test_runner'), dict) else {}
+		fallback_command, fallback_path = extract_command_and_path(top_level, 'test_runner')
+		command = command or fallback_command
+		execute_path = execute_path or fallback_path
+	if not command or not execute_path:
+		print("Error: test_runner configuration missing command or execute_path", file=sys.stderr)
+		return 2
+
+	repo_root = os.path.abspath(os.path.join(here, '..', '..', '..'))
+	cwd = execute_path if os.path.isabs(execute_path) else os.path.join(repo_root, execute_path)
+	command = normalize_zephyr_command(command, 'run', project_type)
+	extra_args = [test_path] if test_path else []
+	cmd = build_command(command, extra_args, here, cwd)
+	print(f"Running tests: cd {cwd} && {' '.join(cmd)}")
+	proc = subprocess.run(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+	if proc.stdout:
+		print(proc.stdout, end='')
+	if proc.returncode != 0:
+		return 1
+	if project_type == 'zephyr':
+		verifier = os.path.join(here, 'zephyr_verify_coverage.py')
+		print(f"Running coverage check: {verifier}")
+		code = run_script(verifier)
+		if code != 0:
+			print(f"Stopped: {os.path.basename(verifier)} exited with code {code}", file=sys.stderr)
+			return code
+	print("OK: Build succeeded. All tests passed.")
+	return 0
+
+
+def configure_test_runner(rp: RulesParser, tr: TestRunner, project_type: str) -> None:
+	"""Configure a TestRunner instance `tr` using `rp` for `project_type`.
+
+	This extracts the runner and builder configurations and calls
+	`tr.make_framework_entry` for both.
+	"""
+	runner_cfg = rp.get_test_runner(project_type)
+	builder_cfg = rp.get_test_builder(project_type)
+
+	tr.make_framework_entry(
+		False,
+		runner_cfg.get("command", ""),
+		runner_cfg.get("execute_path", ""),
+		runner_cfg.get("build_path", runner_cfg.get("execute_path", "")),
+	)
+
+	tr.make_framework_entry(
+		True,
+		builder_cfg.get("command", ""),
+		builder_cfg.get("execute_path", ""),
+		builder_cfg.get("build_path", builder_cfg.get("execute_path", "")),
+		builder_cfg.get("compiler_flags", []),
+		builder_cfg.get("gcc_builder", True),
+	)
+
+
 def main() -> int:
 	here = os.path.dirname(os.path.abspath(__file__))
 	parser = argparse.ArgumentParser(description='Run verification steps and optionally build a unit test')
@@ -152,15 +224,44 @@ def main() -> int:
 	parser.add_argument('--run_test', nargs='?', const='', metavar='PATH', help='Path (from zephyr_main_app) to unit test to run, e.g. unit_tests/parest')
 	parser.add_argument('--run_tests', dest='run_test', nargs='?', const='', metavar='PATH', help='Alias for --run_test')
 	parser.add_argument('--project', metavar='NAME', help='Project type from .agent_rules.json (case-insensitive)')
+	parser.add_argument('--rule_set', metavar='PATH', help='Path to .agent_rules.json (defaults to script directory)')
 	args = parser.parse_args()
+	
+	# Verify args
+	if args.project is None:
+		print("Error: --project is required", file=sys.stderr)
+		return 2
+	else:
+		args.project = args.project.strip().lower()
+	
+	# loading project specific configs
+	project_config = None
+	if args.rule_set is None:
+		try:
+			rp = RulesParser(os.path.join(here, '.agent_rules.json'))
+			project_config = rp.load_project_config(args.project)
+		except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
+			print(f"Error: {exc}", file=sys.stderr)
+			return 2
+	else:
+		try:
+			rp = RulesParser(args.rule_set)
+			project_config = rp.load_project_config(args.project)
+		except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
+			print(f"Error: {exc}", file=sys.stderr)
+			return 2
 
+	# configure test runner with project-specific command and path
+	tr = TestRunner()
+	configure_test_runner(rp, tr, args.project)
+	
 	steps = [
 		os.path.join(here, 'verify_files.py'),
 		os.path.join(here, 'zephyr_cmakelists_checker.py'),
 		os.path.join(here, 'zephyr_mock_link_audit.py'),
 		os.path.join(here, 'zephyr_unittest_file_checker.py'),
 	]
-
+	#running scripts
 	for script in steps:
 		if not os.path.isfile(script):
 			print(f"Error: script not found: {script}", file=sys.stderr)
@@ -171,105 +272,22 @@ def main() -> int:
 			print(f"Stopped: {os.path.basename(script)} exited with code {code}", file=sys.stderr)
 			return code
 
-	project_config = None
-	if args.build is not None or args.run_test is not None:
-		try:
-			project_config = load_project_config(here, args.project)
-		except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
-			print(f"Error: {exc}", file=sys.stderr)
-			return 2
-
 	# If requested, run build step after successful checks
 	if args.build is not None:
-		project_type = str(project_config.get('project_type', '')).lower() if project_config else ''
-		testframework = read_test_framework(project_config)
-		builder = {}
-		if isinstance(testframework, dict):
-			normalized_framework = normalize_keys(testframework)
-			builder = normalized_framework.get('test_builder') or normalized_framework.get('testbuilder') or normalized_framework.get('builder') or {}
-		if not isinstance(builder, dict):
-			builder = {}
-		command, execute_path = extract_command_and_path(builder, 'test_builder')
-		if not command or not execute_path:
-			fallback_command, fallback_path = extract_command_and_path(testframework, 'test_builder')
-			command = command or fallback_command
-			execute_path = execute_path or fallback_path
-		if not command or not execute_path:
-			normalized_project = normalize_keys(project_config)
-			top_level = normalized_project.get('test_builder') if isinstance(normalized_project.get('test_builder'), dict) else {}
-			fallback_command, fallback_path = extract_command_and_path(top_level, 'test_builder')
-			command = command or fallback_command
-			execute_path = execute_path or fallback_path
-		if not command or not execute_path:
-			print("Error: test_builder configuration missing command or execute_path", file=sys.stderr)
-			return 2
-
-		repo_root = os.path.abspath(os.path.join(here, '..', '..', '..'))
-		cwd = execute_path if os.path.isabs(execute_path) else os.path.join(repo_root, execute_path)
-		command = normalize_zephyr_command(command, 'build', project_type)
-		build_path = args.build
-		extra_args = [build_path] if build_path else []
-		cmd = build_command(command, extra_args, here, cwd)
-		print(f"Running build: cd {cwd} && {' '.join(cmd)}")
-		proc = subprocess.run(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-		if proc.stdout:
-			print(proc.stdout, end='')
-		if proc.returncode != 0:
-			return 1
-		print("OK: Build succeeded.")
+		tr.make_build()
+		if tr._failed:
+			# Build failed no reason to attempt running tests
+			sys.exit(1)
 		
-
-	# If requested, run test step after successful checks
 	if args.run_test is not None:
-		project_type = str(project_config.get('project_type', '')).lower() if project_config else ''
-		testframework = read_test_framework(project_config)
-		runner = {}
-		if isinstance(testframework, dict):
-			normalized_framework = normalize_keys(testframework)
-			runner = normalized_framework.get('test_runner') or normalized_framework.get('testrunner') or normalized_framework.get('runner') or {}
-		if not isinstance(runner, dict):
-			runner = {}
-		command, execute_path = extract_command_and_path(runner, 'test_runner')
-		if not command or not execute_path:
-			fallback_command, fallback_path = extract_command_and_path(testframework, 'test_runner')
-			command = command or fallback_command
-			execute_path = execute_path or fallback_path
-		if not command or not execute_path:
-			normalized_project = normalize_keys(project_config)
-			top_level = normalized_project.get('test_runner') if isinstance(normalized_project.get('test_runner'), dict) else {}
-			fallback_command, fallback_path = extract_command_and_path(top_level, 'test_runner')
-			command = command or fallback_command
-			execute_path = execute_path or fallback_path
-		if not command or not execute_path:
-			print("Error: test_runner configuration missing command or execute_path", file=sys.stderr)
-			return 2
-
-		repo_root = os.path.abspath(os.path.join(here, '..', '..', '..'))
-		cwd = execute_path if os.path.isabs(execute_path) else os.path.join(repo_root, execute_path)
-		command = normalize_zephyr_command(command, 'run', project_type)
-		test_path = args.run_test
-		extra_args = [test_path] if test_path else []
-		cmd = build_command(command, extra_args, here, cwd)
-		print(f"Running tests: cd {cwd} && {' '.join(cmd)}")
-		proc = subprocess.run(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-		if proc.stdout:
-			print(proc.stdout, end='')
-		if proc.returncode != 0:
-			return 1
-		if project_type == 'zephyr':
-			# Tests passed - run coverage verifier script located next to this driver.
-			verifier = os.path.join(here, 'zephyr_verify_coverage.py')
-			print(f"Running coverage check: {verifier}")
-			code = run_script(verifier)
-			if code != 0:
-				print(f"Stopped: {os.path.basename(verifier)} exited with code {code}", file=sys.stderr)
-				return code
-		print("OK: Build succeeded. All tests passed.")
-
+		tr.make_testrun()
+		if tr._failed:
+			# Test run failed no reason to attempt coverage check
+			sys.exit(1)
 
 	print('All checks passed')
 	return 0
 
 
 if __name__ == '__main__':
-	raise SystemExit(main())
+	main()
