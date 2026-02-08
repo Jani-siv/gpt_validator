@@ -85,30 +85,37 @@ class TestRunner:
         build_dir.mkdir(parents=True, exist_ok=True)
 
 
-    def gcc_builder(self, compiling_flags: list[str]):
+    def gcc_builder(self):
         try:
-            # Ensure compiling_flags is a flat list of strings
-            flags = []
-            if isinstance(compiling_flags, (list, tuple)):
-                for f in compiling_flags:
-                    flags.append(str(f))
-            elif compiling_flags:
-                flags = [str(compiling_flags)]
+            # Use only the configured compiler flags from self.builder
+            cfg_flags = self.builder.get("compiler_flags", [])
+            if isinstance(cfg_flags, (list, tuple)):
+                flags = [str(f) for f in cfg_flags]
+            elif cfg_flags:
+                flags = [str(cfg_flags)]
+            else:
+                flags = []
 
-            cmake_cmd = ["cmake", "-DCMAKE_CXX_COMPILER=g++"] + flags + [str(self.builder["build_path"])]
+            src = str(self.builder["execute_path"])
+            build = str(self.builder["build_path"])
+            cmake_cmd = ["cmake", "-S", src, "-B", build, "-DCMAKE_CXX_COMPILER=g++"] + flags
             self.run(cmake_cmd, cwd=self.builder["execute_path"])
             self.run(["make", f"-j{self.cores}"], cwd=self.builder["build_path"])
             print("OK: build success")
         except subprocess.CalledProcessError as e:
             print(f"FAIL: build failed ({e})")
+            # Mark the TestRunner as failed so higher-level callers can react.
+            self._failed = True
 
 
     def make_build(self):
         self.clean_build_dirs(self.builder["build_path"])
         if self.use_gcc_builder:
-            self.gcc_builder([])
+            # call gcc_builder which uses configured flags from self.builder
+            self.gcc_builder()
         else:
             print("No supported builder configured, cannot build tests")
+
 
     def make_testrun(self):
         self.make_build()
@@ -130,7 +137,7 @@ class TestRunner:
             else:
                 print("OK: tests success")
         else:
-            print("No supported test runner configured, cannot run tests")       
+            print("No supported test runner configured, cannot run tests")
 
 
     def has_failed(self) -> bool:
