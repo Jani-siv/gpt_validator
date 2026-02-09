@@ -1,82 +1,52 @@
-#!/usr/bin/env python3
-"""Integration test agent to build gcc_tester using TestRunner.
+# This test suite test how two or more classes behaves together. All configurations mimic real-world use cases
+# Current classes unde test are:
+# gpt_validator/agent/build_and_run_tests.py and this uses rules_parser.py to parse rules and build the builder and runner configurations
+# The test scenarios are defined in the main function and include:
 
-This script creates a temporary rules file (does not modify the repo's
-.agent_rules.json), configures a TestRunner for the local `gcc_tester`
-project, runs the build, prints the `_failed` state and exits non-zero
-on failure.
-"""
-from pathlib import Path
-import json
 import sys
 import traceback
-import subprocess
+from pathlib import Path
 
-# Ensure repository root is on sys.path so sibling package `agent` can be imported
-repo_root = Path(__file__).resolve().parent.parent
+# Ensure repository root is on sys.path so sibling package imports work
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-# Import the TestRunner by loading the source file directly to avoid
-# package-name conflicts with this script (which is named `agent.py`).
-import importlib.util
-import types
+from agent.build_and_run_tests import TestRunner
 
-# Create a synthetic `agent` package in sys.modules so we can load the
-# package modules by their full names (e.g. 'agent.rules_parser'). This
-# avoids import-time confusion with this script being named `agent.py`.
-agent_pkg = types.ModuleType("agent")
-agent_pkg.__path__ = [str(repo_root / "agent")]
-sys.modules["agent"] = agent_pkg
 
-# Load agent.rules_parser
-rules_mod_path = repo_root / "agent" / "rules_parser.py"
-spec = importlib.util.spec_from_file_location("agent.rules_parser", str(rules_mod_path))
-rules_mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(rules_mod)
-sys.modules["agent.rules_parser"] = rules_mod
 
-# Load agent.build_and_run_tests
-build_mod_path = repo_root / "agent" / "build_and_run_tests.py"
-spec = importlib.util.spec_from_file_location("agent.build_and_run_tests", str(build_mod_path))
-build_mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(build_mod)
-sys.modules["agent.build_and_run_tests"] = build_mod
-TestRunner = build_mod.TestRunner
 
-def get_gcc_tester_rules():
-    return {
+_SCENARIO_CONFIGS = {
+    "build": {
         "version": "0.1",
         "project_configurations": [
             {
-                "project_type": "gcc_tester",
+                "scenario": "build",
                 "language": "C/C++",
                 "build_system": "cmake",
                 "testframework": {
                     "test_runner": {
                         "name": "ctest",
                         "command": "",
-                        "execute_path": "gcc_tester",
-                        "build_path": "gcc_tester/build"
+                        "execute_path": "gcc_tester/build",
+                        "build_path": "gcc_tester/build",
                     },
                     "test_builder": {
                         "name": "gcc_builder",
                         "gcc_builder": True,
                         "command": "",
                         "compiler_flags": ["-DUNIT_TESTS=ON"],
-                        "execute_path": "gcc_tester/build",
-                        "build_path": "gcc_tester/build"
-                    }
-                }
+                        "execute_path": "gcc_tester",
+                        "build_path": "gcc_tester/build",
+                    },
+                },
             }
-        ]
-    }
-
-
-def get_gcc_tester_test_failure_rules():
-    return {
+        ],
+    },
+    "test": {
         "version": "0.1",
         "project_configurations": [
             {
-                "project_type": "gcc_tester",
+                "scenario": "test",
                 "language": "C/C++",
                 "build_system": "cmake",
                 "testframework": {
@@ -84,7 +54,33 @@ def get_gcc_tester_test_failure_rules():
                         "name": "ctest",
                         "command": "",
                         "execute_path": "gcc_tester/build",
-                        "build_path": "gcc_tester/build"
+                        "build_path": "gcc_tester/build",
+                    },
+                    "test_builder": {
+                        "name": "gcc_builder",
+                        "gcc_builder": True,
+                        "command": "",
+                        "compiler_flags": ["-DUNIT_TESTS=ON"],
+                        "execute_path": "gcc_tester",
+                        "build_path": "gcc_tester/build",
+                    },
+                },
+            }
+        ],
+    },
+    "fail-test": {
+        "version": "0.1",
+        "project_configurations": [
+            {
+                "scenario": "fail-test",
+                "language": "C/C++",
+                "build_system": "cmake",
+                "testframework": {
+                    "test_runner": {
+                        "name": "ctest",
+                        "command": "",
+                        "execute_path": "gcc_tester/build",
+                        "build_path": "gcc_tester/build",
                     },
                     "test_builder": {
                         "name": "gcc_builder",
@@ -92,19 +88,17 @@ def get_gcc_tester_test_failure_rules():
                         "command": "",
                         "compiler_flags": ["-DUNIT_TESTS=ON", "-DFAIL_TEST=ON"],
                         "execute_path": "gcc_tester",
-                        "build_path": "gcc_tester/build"
-                    }
-                }
+                        "build_path": "gcc_tester/build",
+                    },
+                },
             }
-        ]
-    }
-
-def get_gcc_tester_fail_build_rules():
-    return {
+        ],
+    },
+    "fail-build": {
         "version": "0.1",
         "project_configurations": [
             {
-                "project_type": "gcc_tester",
+                "scenario": "fail-build",
                 "language": "C/C++",
                 "build_system": "cmake",
                 "testframework": {
@@ -112,7 +106,7 @@ def get_gcc_tester_fail_build_rules():
                         "name": "ctest",
                         "command": "",
                         "execute_path": "gcc_tester",
-                        "build_path": "gcc_tester/build"
+                        "build_path": "gcc_tester/build",
                     },
                     "test_builder": {
                         "name": "gcc_builder",
@@ -120,23 +114,62 @@ def get_gcc_tester_fail_build_rules():
                         "command": "",
                         "compiler_flags": ["-DUNIT_TESTS=ON", "-DFAIL_BUILD=ON"],
                         "execute_path": "gcc_tester/build",
-                        "build_path": "gcc_tester/build"
-                    }
-                }
+                        "build_path": "gcc_tester/build",
+                    },
+                },
             }
-        ]
-    }
+        ],
+    },
+    "pass-custom-build": {
+        "version": "0.1",
+        "project_configurations": [
+            {
+                "scenario": "pass-custom-build",
+                "language": "python",
+                "build_system": "custom",
+                "testframework": {
+                    "test_runner": {
+                        "name": "ctest",
+                        "command": "",
+                        "execute_path": "custom_builder",
+                        "build_path": "custom_builder/build",
+                    },
+                    "test_builder": {
+                        "name": "py-builder",
+                        "gcc_builder": False,
+                        "command": "python3 current_dir_builder.py",
+                        "compiler_flags": [],
+                        "execute_path": "custom_builder",
+                        "build_path": "custom_builder/build",
+                    },
+                },
+            }
+        ],
+    },
+}
 
-def get_test_runner_instance(rules: dict) -> TestRunner:
-    #use rules to configure builder and runner for gcc_tester (paths are relative to repo root)
-    builder_build_path = rules.get("project_configurations", [])[0].get("testframework", {}).get("test_builder", {}).get("build_path", "")
-    builder_exec_path = rules.get("project_configurations", [])[0].get("testframework", {}).get("test_builder", {}).get("execute_path", "")
-    builder_command = rules.get("project_configurations", [])[0].get("testframework", {}).get("test_builder", {}).get("command", "")
-    tester_command = rules.get("project_configurations", [])[0].get("testframework", {}).get("test_runner", {}).get("command", "")
-    tester_build_path = rules.get("project_configurations", [])[0].get("testframework", {}).get("test_runner", {}).get("build_path", "")
-    tester_exec_path = rules.get("project_configurations", [])[0].get("testframework", {}).get("test_runner", {}).get("execute_path", "")
-    use_gcc_builder = rules.get("project_configurations", [])[0].get("testframework", {}).get("test_builder", {}).get("gcc_builder", False)
-    compiler_flags = rules.get("project_configurations", [])[0].get("testframework", {}).get("test_builder", {}).get("compiler_flags", [])
+
+def get_test_runner_instance(scenario: str) -> TestRunner:
+    """Create a `TestRunner` for the named scenario.
+
+    The function looks up the scenario configuration from `_SCENARIO_CONFIGS`
+    and mirrors the previous behaviour when constructing the `TestRunner`.
+    """
+    rules = _SCENARIO_CONFIGS.get(scenario)
+    if not rules:
+        raise KeyError(f"Unknown scenario: {scenario}")
+
+    # use rules to configure builder and runner for gcc_tester (paths are relative to repo root)
+    pc = rules.get("project_configurations", [])[0].get("testframework", {})
+    builder_build_path = pc.get("test_builder", {}).get("build_path", "")
+    builder_exec_path = pc.get("test_builder", {}).get("execute_path", "")
+    builder_command = pc.get("test_builder", {}).get("command", "")
+    tester_command = pc.get("test_runner", {}).get("command", "")
+    tester_build_path = pc.get("test_runner", {}).get("build_path", "")
+    tester_exec_path = pc.get("test_runner", {}).get("execute_path", "")
+    use_gcc_builder = pc.get("test_builder", {}).get("gcc_builder", False)
+    compiler_flags = pc.get("test_builder", {}).get("compiler_flags", [])
+
     tr = TestRunner(use_gcc_builder)
     tr.make_framework_entry(True, builder_command, builder_exec_path, builder_build_path, compiler_flags, use_gcc_builder)
     tr.make_framework_entry(False, tester_command, tester_exec_path, tester_build_path)
@@ -149,8 +182,7 @@ def main():
         name = "build"
 
         def __init__(self):
-            self.rules = get_gcc_tester_rules()
-            self.tr = get_test_runner_instance(self.rules)
+            self.tr = get_test_runner_instance("build")
 
         def run(self):
             # Prefer TestRunner.make_build if present
@@ -173,8 +205,7 @@ def main():
         name = "test"
 
         def __init__(self):
-            self.rules = get_gcc_tester_rules()
-            self.tr = get_test_runner_instance(self.rules)
+            self.tr = get_test_runner_instance("test")
 
         def run(self) -> bool:
             # Prefer TestRunner.make_testrun it handle build and ctest automatically
@@ -199,8 +230,7 @@ def main():
         name = "fail-build"
 
         def __init__(self):
-            self.rules = get_gcc_tester_fail_build_rules()
-            self.tr = get_test_runner_instance(self.rules)
+            self.tr = get_test_runner_instance("fail-build")
 
         def run(self) -> bool:
             # Prefer TestRunner.make_build if present
@@ -225,8 +255,7 @@ def main():
         name = "fail-test"
 
         def __init__(self):
-            self.rules = get_gcc_tester_test_failure_rules()
-            self.tr = get_test_runner_instance(self.rules)
+            self.tr = get_test_runner_instance("fail-test")
 
         def run(self) -> bool:
             # Prefer TestRunner.make_testrun it handle build and ctest automatically
@@ -244,11 +273,35 @@ def main():
                     return True
             return True  # if we can't determine failure, return True to indicate failure by default
 
+
+    class PassCustomBuildScenario:
+        name = "pass-custom-build"
+
+        def __init__(self):
+            self.tr = get_test_runner_instance("pass-custom-build")
+
+        def run(self) -> bool:
+            # Prefer TestRunner.make_build if present
+            if hasattr(self.tr, "make_build"):
+                try:
+                    self.tr.make_build()
+                except Exception:
+                    traceback.print_exc()
+            if hasattr(self.tr, "_failed"):
+                if self.tr._failed == False:
+                    print("TestRunner reports success as expected")
+                    return False
+                else:
+                    print("TestRunner did not report success when expected")
+                    return True
+            return True  # if we can't determine failure, return True to indicate failure by default
+
     scenarios = {
         "build": BuildScenario(),
         "test": TestScenario(),
         "fail-build": FailBuildScenario(),
         "fail-test": FailTestScenario(),
+        "pass-custom-build": PassCustomBuildScenario(),
     }
 
     import argparse

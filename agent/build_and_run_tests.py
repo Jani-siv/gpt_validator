@@ -1,21 +1,9 @@
-#!/usr/bin/env python3
-"""
-build_and_run_tests.py
 
-Reads .agent_rules.json to determine where to start building and
-performs a clean CMake build for unit and integration tests.
-
-Usage: python build_and_run_tests.py [--project-type dti_tools] [--rules path/to/.agent_rules.json]
-"""
-import argparse
-import json
 import multiprocessing
 import os
 import shutil
 import subprocess
 from pathlib import Path
-import sys
-from agent.rules_parser import RulesParser
 
 
 def git_repo_root(cwd: Path | str | None = None) -> Path | None:
@@ -118,11 +106,24 @@ class TestRunner:
             self.gcc_builder()
         else:
             print("Running custom command for build: " + self.builder["command"])
-            self.custom_cmd_output = self.run(self.builder["command"].split(), cwd=self.builder["execute_path"], capture_output=True)
+            result = self.run(self.builder["command"].split(), cwd=self.builder["execute_path"], capture_output=True)
+            if result and result.returncode != 0:
+                print(f"FAIL: custom build command failed with return code {result.returncode}")
+                print(f"Output:\n{result.stderr}")
+                # mark failure for higher-level caller to act on
+                self.custom_cmd_output = result.stderr
+                self._failed = True
+            else:
+                print("OK: custom build command succeeded")
+                #print(f"Output:\n{result.stdout}")
+                self.custom_cmd_output = result.stdout
 
 
     def make_testrun(self):
         self.make_build()
+        if self.has_failed():
+            print("FAIL: Test run failed due to build failure. Skipping test run.")
+            return
         if self.use_gcc_builder:
             ret_code, result = self.run_ctest_tests()
             if ret_code != 0:
@@ -142,7 +143,17 @@ class TestRunner:
                 print("OK: tests success")
         else:
             print("Running custom command to run tests: " + self.runner["command"])
-            self.custom_cmd_output = self.run(self.runner["command"].split(), cwd=self.runner["execute_path"], capture_output=True)
+            result = self.run(self.runner["command"].split(), cwd=self.runner["execute_path"], capture_output=True)
+            if result.returncode != 0:
+                print(f"FAIL: custom test command failed with return code {result.returncode}")
+                print(f"Output:\n{result.stderr}")
+                # mark failure for higher-level caller to act on
+                self.custom_cmd_output = result.stderr
+                self._failed = True
+            else:
+                print("OK: custom test command succeeded")
+                #print(f"Output:\n{result.stdout}")
+                self.custom_cmd_output = result.stdout
 
 
     def has_failed(self) -> bool:
