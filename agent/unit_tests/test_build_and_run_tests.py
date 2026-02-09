@@ -201,7 +201,7 @@ def test_run_build_success_and_failure(tmp_path, monkeypatch):
     elif hasattr(br, "TestRunner"):
         tr = br.TestRunner()
         tr.repo_root = project
-        tr.builder = {"build_path": project / "build", "execute_path": project}
+        tr.builder = {"build_path": project / "build", "execute_path": project, "command": ""}
         tr.make_build()
         assert (project / "build").exists()
 
@@ -211,12 +211,18 @@ def test_run_build_success_and_failure(tmp_path, monkeypatch):
 
     if hasattr(br, "TestRunner"):
         def fail_method(self, cmd, cwd=None, capture_output=False, env=None, **kwargs):
-            raise subprocess.CalledProcessError(1, cmd)
+            class R:
+                def __init__(self):
+                    self.returncode = 1
+                    self.stdout = ""
+                    self.stderr = "failed"
+
+            return R()
 
         monkeypatch.setattr(br.TestRunner, "run", fail_method, raising=False)
         # invoking make_build should handle the error (no uncaught exception)
         tr2 = br.TestRunner()
-        tr2.builder = {"build_path": project / "build", "execute_path": project}
+        tr2.builder = {"build_path": project / "build", "execute_path": project, "command": ""}
         tr2.use_gcc_builder = True
         tr2.make_build()
     elif hasattr(br, "run"):
@@ -306,15 +312,13 @@ def test_load_rules_and_get_execute_path(tmp_path):
         assert tb["command"] == "make"
         assert rp.get_test_builder("other") is None
     else:
-        loaded = mod.load_rules(rules_file)
-        assert loaded["project_configurations"][0]["project_type"] == "myproj"
-
-        exec_path, cmd = mod.get_execute_path(loaded, "myproj")
-        assert exec_path == "path/to/proj"
-        assert cmd == "make"
-
-        exec_path_none, cmd_none = mod.get_execute_path(loaded, "other")
-        assert exec_path_none is None and cmd_none is None
+        # fall back to the standalone RulesParser implementation
+        import agent.rules_parser as rpmod
+        rp = rpmod.RulesParser(rules_file)
+        tb = rp.get_test_builder("myproj")
+        assert tb["execute_path"] == "path/to/proj"
+        assert tb["command"] == "make"
+        assert rp.get_test_builder("other") is None
 
 
 def test_find_repo_root(tmp_path):
@@ -450,7 +454,11 @@ def test_main_build_and_test_success(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("PYTHONWARNINGS", "ignore")
 
     # construct TestRunner and drive build/test flow using RulesParser
-    rp = mod.RulesParser(rules_file)
+    if hasattr(mod, "RulesParser"):
+        rp = mod.RulesParser(rules_file)
+    else:
+        import agent.rules_parser as rpmod
+        rp = rpmod.RulesParser(rules_file)
     runner_cfg = rp.get_test_runner("dti_tools")
     builder_cfg = rp.get_test_builder("dti_tools") or {}
 
@@ -491,6 +499,7 @@ def test_main_test_failure_reports(tmp_path, monkeypatch):
         def __init__(self):
             self.returncode = 1
             self.stdout = "The following tests FAILED:\n  1 - BadTest (Failed)\n"
+            self.stderr = "ctest failed"
 
     def fake_run_fail(cmd, cwd=None, env=None, capture_output=False, text=None):
         if capture_output:
@@ -504,7 +513,11 @@ def test_main_test_failure_reports(tmp_path, monkeypatch):
         return None
 
     monkeypatch.setattr(mod.TestRunner, "run", fake_run_fail_method, raising=False)
-    rp = mod.RulesParser(rules_file)
+    if hasattr(mod, "RulesParser"):
+        rp = mod.RulesParser(rules_file)
+    else:
+        import agent.rules_parser as rpmod
+        rp = rpmod.RulesParser(rules_file)
     runner_cfg = rp.get_test_runner("dti_tools")
     builder_cfg = rp.get_test_builder("dti_tools") or {}
 
