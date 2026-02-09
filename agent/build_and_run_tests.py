@@ -77,27 +77,37 @@ class TestRunner:
 
 
     def gcc_builder(self):
-        try:
-            # Use only the configured compiler flags from self.builder
-            cfg_flags = self.builder.get("compiler_flags", [])
-            if isinstance(cfg_flags, (list, tuple)):
-                flags = [str(f) for f in cfg_flags]
-            elif cfg_flags:
-                flags = [str(cfg_flags)]
-            else:
-                flags = []
 
-            src = str(self.builder["execute_path"])
-            build = str(self.builder["build_path"])
-            cmake_cmd = ["cmake", "-S", src, "-B", build, "-DCMAKE_CXX_COMPILER=g++"] + flags
-            self.run(cmake_cmd, cwd=self.builder["execute_path"])
-            self.run(["make", f"-j{self.cores}"], cwd=self.builder["build_path"])
-            print("OK: build success")
-        except subprocess.CalledProcessError as e:
-            print(f"FAIL: build failed ({e})")
-            # Mark the TestRunner as failed so higher-level callers can react.
+        # Use only the configured compiler flags from self.builder
+        cfg_flags = self.builder.get("compiler_flags", [])
+        if isinstance(cfg_flags, (list, tuple)):
+            flags = [str(f) for f in cfg_flags]
+        elif cfg_flags:
+            flags = [str(cfg_flags)]
+        else:
+            flags = []
+
+        src = str(self.builder["execute_path"])
+        build = str(self.builder["build_path"])
+        cmake_cmd = ["cmake", "-S", src, "-B", build, "-DCMAKE_CXX_COMPILER=g++"] + flags
+        result = self.run(cmake_cmd, cwd=self.builder["execute_path"], capture_output=True)
+        if result and result.returncode != 0:
+            print(f"FAIL: cmake configuration failed with return code {result.returncode}")
+            print(f"Output:\n{result.stderr}")
+            # mark failure for higher-level caller to act on
+            self.custom_cmd_output = result.stderr
             self._failed = True
-
+            return
+        result = self.run(["make", f"-j{self.cores}"], cwd=self.builder["build_path"], capture_output=True)
+        if result and result.returncode != 0:
+            print(f"FAIL: make failed with return code {result.returncode}")
+            print(f"Output:\n{result.stderr}")
+            self.custom_cmd_output = result.stderr
+            self._failed = True
+            return
+        print("OK: build success")
+        # Mark the TestRunner as failed so higher-level callers can react.
+        self._failed = False
 
     def make_build(self):
         self.clean_build_dirs(self.builder["build_path"])
