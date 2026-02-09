@@ -32,7 +32,8 @@ jobs:
 
       - name: Verify success
         if: ${{ success() }}
-        run: echo "OK: integration_tests/build_and_run_test_tester.py completed successfully."
+        run: |
+          echo "OK: integration_tests/build_and_run_test_tester.py completed successfully."
 
       - name: Show brief debug info on failure
         if: ${{ failure() }}
