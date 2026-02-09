@@ -43,6 +43,39 @@ class RulesParser:
                 return pc.get("testframework", {}).get("test_builder")
         return None
 
+    def get_file_rules(self, project_type: str) -> Optional[Dict[str, Any]]:
+        """Return the `file_rules` dict for `project_type`, or None if missing.
+
+        This method returns the `file_rules` entry exactly as found in
+        the loaded `.agent_rules.json` for the matching project type.
+        """
+        for pc in self.rules.get("project_configurations", []):
+            if pc.get("project_type") == project_type:
+                return pc.get("file_rules")
+        return None
+
+    def get_cpp_code_rules(self, project_type: str) -> Optional[Dict[str, Any]]:
+        """Return the `cpp_code_rules` dict for `project_type`, or None if missing.
+
+        This returns the `cpp_code_rules` entry from the loaded
+        `.agent_rules.json` for the matching project type.
+        """
+        for pc in self.rules.get("project_configurations", []):
+            if pc.get("project_type") == project_type:
+                return pc.get("cpp_code_rules")
+        return None
+
+    def get_cmake_rules(self, project_type: str) -> Optional[Dict[str, Any]]:
+        """Return the `cmake_rules` dict for `project_type`, or None if missing.
+
+        Returns the `cmake_rules` entry from the loaded
+        `.agent_rules.json` for the matching project type.
+        """
+        for pc in self.rules.get("project_configurations", []):
+            if pc.get("project_type") == project_type:
+                return pc.get("cmake_rules")
+        return None
+
     def load_project_config(self, project_type: Optional[str]) -> dict:
         """Return a project configuration from the already-loaded rules.
 

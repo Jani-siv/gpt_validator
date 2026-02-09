@@ -109,6 +109,47 @@
         "not_allowed_cmake_linked_libraries": [],
         "not_allowed_cmake_subdirectories": []
       }
+    },
+    {
+      "project_type": "testing",
+      "language": "C/C++",
+      "build_system": "cmake",
+      "test_coverage": "0",
+      "testframework": {
+        "test_runner": {
+          "name": "test_runner",
+          "info": "Runs gpt_validator testing",
+          "command": "",
+          "execute_path": "gcc_tester",
+          "build_path": "gcc_tester/build"
+        },
+        "test_builder": {
+          "name": "test_builder",
+          "info": "Builds gpt_validator unit tests",
+          "gcc_builder": true,
+          "command": "",
+          "compiler_flags": ["-DUNIT_TESTS=ON"],
+          "execute_path": "gcc_tester",
+          "build_path": "gcc_tester/build"
+        }
+      },
+      "file_rules": {
+        "allowed_to_modify": ["gcc_tester"],
+        "ignored_files": ["*.json", "*.md", "*.txt", "*.py"]
+      },
+      "cpp_code_rules": {
+        "not_allowed_header_includes": [],
+        "not_allowed_include_extensions": []
+      },
+      "cmake_rules": {
+        "cmake_overall_guidelines": {
+          "allow_absolute_paths": false,
+          "allow_FILE_function": false
+        },
+        "not_allowed_cmake_include_dirs": [],
+        "not_allowed_cmake_linked_libraries": [],
+        "not_allowed_cmake_subdirectories": []
+      }
     }
   ]
 }

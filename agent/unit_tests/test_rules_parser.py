@@ -95,3 +95,38 @@ def test_load_project_config_multiple_requires_selection(tmp_path):
     # unknown project raises ValueError listing available
     with pytest.raises(ValueError):
         rp.load_project_config('missing')
+
+
+def test_get_new_rules_methods(tmp_path):
+    data = {
+        "project_configurations": [
+            {
+                "project_type": "myproj",
+                "file_rules": {
+                    "allowed_to_modify": ["zephyr_main_app/ztests/"],
+                    "ignored_files": ["*.md", "*.txt"]
+                },
+                "cpp_code_rules": {
+                    "not_allowed_header_includes": ["zephyr.h"],
+                    "not_allowed_include_extensions": [".cpp"]
+                },
+                "cmake_rules": {
+                    "cmake_overall_guidelines": {"allow_absolute_paths": False, "allow_FILE_function": False},
+                    "not_allowed_cmake_include_dirs": ["tests/unit_tests"]
+                }
+            }
+        ]
+    }
+    f = tmp_path / "rules.json"
+    f.write_text(json.dumps(data))
+
+    rp = RulesParser(f)
+    expected = data["project_configurations"][0]
+    assert rp.get_file_rules("myproj") == expected["file_rules"]
+    assert rp.get_cpp_code_rules("myproj") == expected["cpp_code_rules"]
+    assert rp.get_cmake_rules("myproj") == expected["cmake_rules"]
+
+    # missing project returns None
+    assert rp.get_file_rules("missing") is None
+    assert rp.get_cpp_code_rules("missing") is None
+    assert rp.get_cmake_rules("missing") is None
