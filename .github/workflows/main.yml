@@ -29,7 +29,7 @@ jobs:
       - name: Run integration test script
         id: run-script
         run: |
-          python3 integration_tests/build_and_run_test_tester.py
+          python3 integration_tests/build_and_run_test_tester.py --all
 
       - name: Verify success
         if: ${{ success() }}
