@@ -19,8 +19,8 @@ import os
 import shlex
 import subprocess
 import sys
-from agent.rules_parser import RulesParser
-from agent.build_and_run_tests import TestRunner
+from rules_parser import RulesParser
+from build_and_run_tests import TestRunner
 
 
 def run_script(path: str) -> int:
