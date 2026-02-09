@@ -39,12 +39,9 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      - name: Build_essential_packages
-        run: |
-          apt-get update && apt-get install -y build-essential
-
       - name: Ensure script is executable
-        run: chmod +x integration_tests/build_and_run_test_tester.py || true
+        run: |
+          chmod +x integration_tests/build_and_run_test_tester.py || true
 
       - name: Run integration test script
         id: run-script
