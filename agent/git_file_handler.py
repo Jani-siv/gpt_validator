@@ -17,6 +17,7 @@ machine parsing and lists staged/unstaged changes as well as untracked files.
 
 from __future__ import annotations
 
+import codecs
 import subprocess
 from typing import Dict, List, Set
 
@@ -25,6 +26,7 @@ __all__ = [
 	"get_created_files",
 	"get_added_files",
 	"get_modified_files",
+	"get_repo_root",
 ]
 
 
@@ -63,6 +65,22 @@ def _run_git_ls_files(repo_dir: str) -> List[str]:
 	return [ln for ln in proc.stdout.splitlines() if ln]
 
 
+def get_repo_root(path: str) -> str | None:
+	"""Return the repository root for a path, or None if not in a repo."""
+	try:
+		proc = subprocess.run(
+			["git", "-C", path, "rev-parse", "--show-toplevel"],
+			check=True,
+			capture_output=True,
+			text=True,
+		)
+	except subprocess.CalledProcessError:
+		return None
+
+	root = proc.stdout.strip()
+	return root or None
+
+
 def _normalize_filename_from_token(tok: str) -> tuple[str, str]:
 	"""Return (status, filename) from a porcelain token.
 
@@ -71,7 +89,7 @@ def _normalize_filename_from_token(tok: str) -> tuple[str, str]:
 	returned.
 	"""
 	if tok.startswith("?? "):
-		return "??", tok[3:]
+		return "??", _unquote_git_path(tok[3:])
 
 	if len(tok) >= 3 and tok[2] == " ":
 		status = tok[:2]
@@ -79,10 +97,17 @@ def _normalize_filename_from_token(tok: str) -> tuple[str, str]:
 		# handle rename formatted as 'R100 from -> to'
 		if " -> " in fname:
 			fname = fname.split(" -> ")[-1]
-		return status, fname
+		return status, _unquote_git_path(fname)
 
 	# Fallback: return entire token as filename with empty status
-	return "", tok
+	return "", _unquote_git_path(tok)
+
+
+def _unquote_git_path(path: str) -> str:
+	"""Return a git porcelain path with optional C-quoting unescaped."""
+	if len(path) >= 2 and path[0] == '"' and path[-1] == '"':
+		return codecs.decode(path[1:-1], "unicode_escape")
+	return path
 
 
 def get_changed_files(path: str) -> Dict[str, List[str]]:
@@ -94,7 +119,16 @@ def get_changed_files(path: str) -> Dict[str, List[str]]:
 	- `modified` contains files modified either staged or unstaged (X or Y == 'M').
 	- `deleted` contains files deleted (X or Y == 'D').
 	"""
-	lines = _run_git_status_porcelain(path)
+	repo_root = get_repo_root(path)
+	if not repo_root:
+		return {
+			"created": [],
+			"added": [],
+			"modified": [],
+			"deleted": [],
+		}
+
+	lines = _run_git_status_porcelain(repo_root)
 
 	created: Set[str] = set()
 	added: Set[str] = set()
@@ -121,7 +155,7 @@ def get_changed_files(path: str) -> Dict[str, List[str]]:
 		if x == "D" or y == "D":
 			deleted.add(fname)
 
-	for fname in _run_git_ls_files(path):
+	for fname in _run_git_ls_files(repo_root):
 		name = fname
 		if name.startswith('./'):
 			name = name[2:]

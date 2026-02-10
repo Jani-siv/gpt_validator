@@ -9,6 +9,8 @@ the project's `file_rules` when possible.
 from __future__ import annotations
 
 from pathlib import Path
+import fnmatch
+import sys
 from typing import Any, Dict, List, Optional
 
 from rules_parser import RulesParser
@@ -41,36 +43,64 @@ class VerifyFiles:
         # load file_rules for the project (may be None)
         self.file_rules: Optional[Dict[str, Any]] = rules_parser.get_file_rules(project_name)
         self.passed = False
+        self.error_files = []
         # perform initial verification
         self.verify()
 
     def verify(self):
         files =[]
+        self.passed = False
+        self.error_files = []
+        allowed_paths = []
         files.append(self.get_created_files())
         files.append(self.get_added_files())
         files.append(self.get_modified_files())
-        allowed_paths = self.rules_parser.get_allowed_path()
-        allowed_exts = self.rules_parser.get_allowed_extensions()
+        allowed_paths = self.get_allowed_path() or []
+        allowed_paths.append(self.get_relative_agent_path())
+        ignored_exts = self.get_ignored_file_extensions()
+        #print(f"Allowed paths: {allowed_paths}")
+        #print(f"Ignored extensions: {ignored_exts}")
+        #print(f"Files to verify: {files}")
+        self.error_files = []
         for file_list in files:
             for f in file_list:
-                if allowed_paths and not any(f.startswith(p) for p in allowed_paths):
-                    print(f"FAIL: File {f} is not under any allowed path {allowed_paths}")
-                    self.passed = False
-                    return
-                if allowed_exts and not any(f.endswith(ext) for ext in allowed_exts):
-                    print(f"FAIL: File {f} does not have an allowed extension {allowed_exts}")
-                    self.passed = False
-                    return
-        self.passed = True
+                if f.startswith("./"):
+                    f = f[2:]
+                if allowed_paths and any(f.startswith(p) for p in allowed_paths):
+                    continue
+                if ignored_exts and any(fnmatch.fnmatch(f, pattern) for pattern in ignored_exts):
+                    continue
+                self.error_files.append(f)
+                print(f"File '{f}' is not in allowed paths and does not have an ignored extension.")
+                    
+        if not self.error_files:
+            self.passed = True
+
+
+    def get_relative_agent_path(self) -> str:
+        """ Return the agent path relative to repository root """
+        agent_path = self.script_path
+        repo_root = git_file_handler.get_repo_root(agent_path)
+        if repo_root and agent_path.startswith(repo_root):
+            relative_agent_path = agent_path[len(repo_root):].lstrip("/")
+            return relative_agent_path
+        return agent_path
 
     def is_passed(self) -> bool:
         """Return True if the verification passed, False otherwise."""
+        if self.error_files:
+            print("FAIL: Verification failed for the following files:")
+            for f in self.error_files:
+                print(f" - {f}")
         return self.passed
 
-    def get_allowed_extensions(self) -> Optional[List[str]]:
-        """Return the list of allowed file extensions for includes, or None."""
-        if self.file_rules and "not_allowed_include_extensions" in self.file_rules:
-            return self.file_rules["not_allowed_include_extensions"]
+    def get_ignored_file_extensions(self) -> Optional[List[str]]:
+        """Return the list of ignored file extensions, or None."""
+        #print(f"File rules: {self.file_rules}")
+        if self.file_rules and "ignored_file_extensions" in self.file_rules:
+            exts = self.file_rules["ignored_file_extensions"]
+            if isinstance(exts, list) and exts:
+                return exts
         return None
 
     def get_allowed_path(self) -> Optional[list[str]]:

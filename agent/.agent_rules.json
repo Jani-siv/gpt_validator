@@ -30,7 +30,7 @@
           "zephyr_main_app/unit_tests/",
           "zephyr_main_app/unit_tests/mock_files"
         ],
-        "ignored_files": [
+        "ignored_file_extensions": [
           "*.md",
           "*.txt",
           "*.json"
@@ -94,7 +94,7 @@
       },
       "file_rules": {
         "allowed_to_modify": ["zephyr_main_app/ztests/", "tools/dti_tools"],
-        "ignored_files": ["*.json", "*.md", "*.txt", "*.py"]
+        "ignored_file_extensions": ["*.json", "*.md", "*.txt", "*.py"]
       },
       "cpp_code_rules": {
         "not_allowed_header_includes": [],
@@ -135,7 +135,7 @@
       },
       "file_rules": {
         "allowed_to_modify": ["gcc_tester"],
-        "ignored_files": ["*.json", "*.md", "*.txt", "*.py"]
+        "ignored_file_extensions": ["*.json", "*.md", "*.txt", "*.py"]
       },
       "cpp_code_rules": {
         "not_allowed_header_includes": [],
