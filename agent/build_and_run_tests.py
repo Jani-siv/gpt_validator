@@ -135,9 +135,16 @@ class TestRunner:
             print("FAIL: Test run failed due to build failure. Skipping test run.")
             return
         if self.use_gcc_builder:
-            ret_code, result = self.run_ctest_tests()
-            if ret_code != 0:
-                failures = self.parse_ctest_failures(result)
+            print("Running ctest to run tests")
+            result = self.run(["ctest", "--output-on-failure"], cwd=self.runner["execute_path"], capture_output=True)
+            """ Case if test are not found """
+            if(result.stderr and result.returncode == 0):
+                print(f"ctest error output:\n{result.stderr}")
+                self._failed = True
+                return
+            """ Case if tests fail """
+            if result.returncode != 0:
+                failures = self.parse_ctest_failures(result.stdout)
                 log_path = (self.runner["build_path"] / "Testing" / "Temporary" / "LastTest.log").resolve()
                 if failures:
                     print("FAIL: tests failed")
@@ -168,11 +175,6 @@ class TestRunner:
 
     def has_failed(self) -> bool:
         return bool(self._failed)
-            
-
-    def run_ctest_tests(self):
-        result = self.run(["ctest", "--output-on-failure"], cwd=self.runner["execute_path"], capture_output=True)
-        return result.returncode, result.stdout
     
 
     def run(self, cmd, cwd=None, capture_output=False):

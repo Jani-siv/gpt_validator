@@ -1,2 +1,3 @@
 pytest>=7.0
 coverage>=7.0
+cxxheaderparser>=0.1.0
