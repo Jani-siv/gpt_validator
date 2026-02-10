@@ -95,7 +95,8 @@ def main() -> int:
 	configure_test_runner(rp, tr, args.project)
 
 	# Running verify_files class
-	vf = VerifyFiles(rp, args.project).verify()
+	vf = VerifyFiles(rp, args.project)
+	vf.verify()
 	if not vf.is_passed():
 		print("File verification failed", file=sys.stderr)
 		return 1
