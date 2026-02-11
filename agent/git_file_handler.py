@@ -19,10 +19,12 @@ from __future__ import annotations
 
 import codecs
 import subprocess
+import os
 from typing import Dict, List, Set
 
 __all__ = [
 	"get_changed_files",
+	"get_changed_lines_and_files",
 	"get_created_files",
 	"get_added_files",
 	"get_modified_files",
@@ -191,4 +193,109 @@ def get_modified_files(path: str) -> List[str]:
 	"""Return files modified (staged or unstaged) under `path`.
 	"""
 	return get_changed_files(path)["modified"]
+
+def get_changed_lines_and_files(path: str) -> Dict[str, List[Dict[str, str]]]:
+	"""Return changed files and the changed content.
+
+	Returns a dict of the form:
+	{
+		"data": [
+			{"file": "file.txt", "content": "changed content or file content"},
+			...
+		]
+	}
+
+	- For untracked/created files the current file content is returned.
+	- For modified/deleted files a git diff (minimal context) vs HEAD is returned
+	  where available. If no diff is available the current file content is
+	  returned when possible.
+	"""
+	repo_root = get_repo_root(path)
+	if not repo_root:
+		return {"data": []}
+
+	changed = get_changed_files(path)
+	created = set(changed.get("created", []))
+	added = set(changed.get("added", []))
+	modified = set(changed.get("modified", []))
+	deleted = set(changed.get("deleted", []))
+
+	def _read_file(fname: str) -> str:
+		abs_path = os.path.join(repo_root, fname)
+		try:
+			with codecs.open(abs_path, "r", "utf-8", "replace") as fh:
+				return fh.read()
+		except FileNotFoundError:
+			return ""
+		except Exception:
+			return ""
+
+	def _git_diff(fname: str) -> str:
+		def _run(args: List[str]) -> str:
+			try:
+				proc = subprocess.run(
+					["git", "-C", repo_root] + args,
+					check=True,
+					capture_output=True,
+					text=True,
+				)
+			except subprocess.CalledProcessError:
+				return ""
+			return proc.stdout
+
+		# Try working-tree vs HEAD (covers staged+unstaged), then staged only
+		diff = _run(["diff", "--no-color", "-U0", "HEAD", "--", fname])
+		if not diff:
+			diff = _run(["diff", "--no-color", "-U0", "--cached", "--", fname])
+		return diff
+
+	def _parse_diff_changes(diff_text: str) -> tuple[str, str]:
+		"""Parse a unified diff and return (added_text, deleted_text).
+
+		- `added_text` is the concatenation of lines starting with '+' (excluding
+		  diff headers like '+++').
+		- `deleted_text` is the concatenation of lines starting with '-' (excluding
+		  diff headers like '---').
+		"""
+		added_lines: List[str] = []
+		deleted_lines: List[str] = []
+		for ln in diff_text.splitlines():
+			if ln.startswith('+++') or ln.startswith('---'):
+				continue
+			if ln.startswith('+') and not ln.startswith('+++'):
+				added_lines.append(ln[1:])
+			elif ln.startswith('-') and not ln.startswith('---'):
+				deleted_lines.append(ln[1:])
+		return ("\n".join(added_lines), "\n".join(deleted_lines))
+
+	results: List[Dict[str, str]] = []
+	all_files = sorted(created | added | modified | deleted)
+	for fname in all_files:
+		added_text = ""
+		modified_text = ""
+		deleted_text = ""
+
+		if fname in created or fname in added:
+			# New files: treat full file content as 'added'
+			added_text = _read_file(fname)
+		else:
+			diff = _git_diff(fname)
+			if diff:
+				a, d = _parse_diff_changes(diff)
+				# For modified files, consider the added portion as 'modified'.
+				modified_text = a
+				deleted_text = d
+			else:
+				# Fallback: if no diff available, return full file content
+				# as 'modified' for visibility.
+				modified_text = _read_file(fname)
+
+		results.append({
+			"file": fname,
+			"added": added_text,
+			"modified": modified_text,
+			"deleted": deleted_text,
+		})
+
+	return {"data": results}
 
